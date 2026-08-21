@@ -283,7 +283,7 @@ async function inspect() {
       iframe: document.querySelectorAll('.smart-recs-mood__media iframe').length,
       cardTitle: document.querySelector('.smart-recs-mood__title')?.textContent || ''
     })`);
-    if (moodScreen.overlay && moodScreen.buttons.length === 2 && moodScreen.controller === 'smart_recs_mood') break;
+    if (moodScreen.overlay && moodScreen.buttons.length === 3 && moodScreen.controller === 'smart_recs_mood') break;
     await delay(250);
   }
   for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -308,9 +308,13 @@ async function inspect() {
     fs.writeFileSync(process.env.SCREENSHOT_PATH, Buffer.from(capture.data, 'base64'));
   }
   const firstMoodTitle = moodScreen.cardTitle;
+  let rightSelection = {};
   const leftSelection = await evaluate(`(() => {
     window.Lampa.Controller.move('left');
+    const likeFocused = document.querySelector('.smart-recs-mood__button--like')?.classList.contains('focus') || false;
+    window.Lampa.Controller.move('left');
     return {
+      likeFocused,
       watchFocused: document.querySelector('.smart-recs-mood__button--watch')?.classList.contains('focus') || false,
       records: window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0
     };
@@ -327,7 +331,17 @@ async function inspect() {
       return true;
     })()`);
   } else {
-    await evaluate("window.Lampa.Controller.move('right')");
+    rightSelection = await evaluate(`(() => {
+      window.Lampa.Controller.move('right');
+      const likeFocused = document.querySelector('.smart-recs-mood__button--like')?.classList.contains('focus') || false;
+      window.Lampa.Controller.move('right');
+      return {
+        likeFocused,
+        nextFocused: document.querySelector('.smart-recs-mood__button--next')?.classList.contains('focus') || false,
+        records: window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0
+      };
+    })()`);
+    await evaluate("window.Lampa.Controller.enter()")
   }
   let remoteNavigation;
   for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -348,17 +362,17 @@ async function inspect() {
   if (process.env.TRAILER_ONLY === '1') {
     const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
     socket.close();
-    return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, remoteNavigation, bridgeMessages, exceptions, consoleMessages };
+    return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, remoteNavigation, bridgeMessages, exceptions, consoleMessages };
   }
 
   const secondMoodTitle = remoteNavigation.cardTitle;
-  await evaluate("window.Lampa.Controller.long()");
-  await delay(100);
-  const moodTasteMenu = await evaluate(`({
-    opened: document.body.classList.contains('selectbox--open'),
-    title: document.querySelector('.selectbox__title')?.textContent || '',
-    items: Array.from(document.querySelectorAll('.selectbox-item__title')).map((item) => item.textContent.trim())
-  })`);
+  const likeButtonSelection = await evaluate(`(() => {
+    window.Lampa.Controller.move('left');
+    return {
+      focused: document.querySelector('.smart-recs-mood__button--like')?.classList.contains('focus') || false,
+      records: window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0
+    };
+  })()`);
   await evaluate("window.Lampa.Controller.enter()");
   let likedNavigation;
   for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -375,8 +389,8 @@ async function inspect() {
     if (likedNavigation.records === 2 && likedNavigation.cardTitle && likedNavigation.cardTitle !== secondMoodTitle && previewResolved) break;
     await delay(100);
   }
-  phase('long OK transition playing');
-  if (likedNavigation?.iframe === 1 && !likedNavigation?.ready) throw new Error(`Long OK trailer failed: ${JSON.stringify(likedNavigation)}`);
+  phase('like button transition playing');
+  if (likedNavigation?.iframe === 1 && !likedNavigation?.ready) throw new Error(`Like button trailer failed: ${JSON.stringify(likedNavigation)}`);
 
   await evaluate("window.Lampa.Controller.back(); true");
   await delay(200);
@@ -395,7 +409,7 @@ async function inspect() {
   }
   if (!resumed) throw new Error(`Draft did not resume: ${JSON.stringify(afterBack)}`);
   for (let target = 3; target <= 10; target += 1) {
-    await evaluate("window.Lampa.Controller.move('right')");
+    await evaluate("window.Lampa.Controller.enter()");
     let records = 0;
     for (let attempt = 0; attempt < 80; attempt += 1) {
       records = await evaluate("window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0");
@@ -434,6 +448,7 @@ async function inspect() {
     const title = document.querySelector('.smart-recs-mood__title')?.textContent || '';
     const draft = window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft;
     window.Lampa.Controller.move('left');
+    window.Lampa.Controller.move('left');
     return {
       title,
       key: draft?.presented?.[draft.presented.length - 1] || '',
@@ -459,7 +474,7 @@ async function inspect() {
 
   const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
   socket.close();
-  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, remoteNavigation, moodTasteMenu, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
+  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, remoteNavigation, likeButtonSelection, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
 }
 
 (async () => {
@@ -478,7 +493,7 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.5.1' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.5.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.controller !== 'modal' || !report.filterPrompt?.focused || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -488,15 +503,15 @@ async function inspect() {
       !report.tasteMenu?.opened || report.tasteMenu?.title !== 'Оценить рекомендацию' ||
       report.tasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
       report.dislikeRemoval?.cards !== report.dislikeBefore?.cards - 1 || !report.dislikeRemoval?.focused || report.dislikeRemoval?.feedbackValue !== -1 ||
-      report.moodScreen?.buttons?.join('|') !== 'Смотреть|Дальше' ||
+      report.moodScreen?.buttons?.join('|') !== 'Смотреть|Нравится|Дальше' ||
       (report.moodScreen?.iframe === 1 && !report.moodScreen?.ready) ||
-      report.moodScreen?.controller !== 'smart_recs_mood' || !report.leftSelection?.watchFocused || report.leftSelection?.records !== 0 ||
+      report.moodScreen?.controller !== 'smart_recs_mood' || !report.leftSelection?.likeFocused || !report.leftSelection?.watchFocused || report.leftSelection?.records !== 0 ||
+      !report.rightSelection?.likeFocused || !report.rightSelection?.nextFocused || report.rightSelection?.records !== 0 ||
       report.remoteNavigation?.records !== 1 ||
       (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.ready) ||
       report.remoteNavigation?.status?.includes('Нажмите') ||
       (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.iframeSrc?.includes('autoplay=1')) ||
-      !report.moodTasteMenu?.opened || report.moodTasteMenu?.title !== 'Оценить трейлер' ||
-      report.moodTasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
+      !report.likeButtonSelection?.focused || report.likeButtonSelection?.records !== 1 ||
       report.likedNavigation?.records !== 2 || report.likedNavigation?.feedback?.join('|') !== '-1|1' ||
       (report.likedNavigation?.iframe === 1 && !report.likedNavigation?.ready) ||
       (report.likedNavigation?.iframe === 1 && !report.likedNavigation?.iframeSrc?.includes('autoplay=1')) ||

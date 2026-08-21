@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.5.1
+ * Lampa Smart Recs v0.5.2
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.5.1';
+    var VERSION = '0.5.2';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -1613,10 +1613,10 @@
             '.smart-recs-mood__shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(6,8,7,.28) 0%,transparent 34%,rgba(6,8,7,.9) 86%,#080a09 100%)}',
             '.smart-recs-mood__top{position:absolute;left:4.2em;right:4.2em;top:2.6em;display:flex;align-items:center;gap:1.2em}.smart-recs-mood__counter{font-size:.9em;letter-spacing:.06em;white-space:nowrap;opacity:.85}',
             '.smart-recs-mood__track{height:.28em;background:rgba(255,255,255,.22);border-radius:1em;overflow:hidden;flex:1}.smart-recs-mood__track span{display:block;width:0;height:100%;background:#edf5ef;transition:width .15s linear}',
-            '.smart-recs-mood__bottom{position:absolute;left:4.2em;right:4.2em;bottom:3.3em;display:flex;align-items:flex-end;justify-content:space-between;gap:3em}',
-            '.smart-recs-mood__info{max-width:57%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__eyebrow{font-size:.82em;letter-spacing:.09em;text-transform:uppercase;opacity:.66;margin-bottom:.6em}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650}.smart-recs-mood__overview{font-size:.9em;line-height:1.45;opacity:.76;margin-top:.75em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
-            '.smart-recs-mood__actions{display:flex;gap:.8em;flex-shrink:0}.smart-recs-mood__button{min-width:8.8em;padding:.88em 1.35em;border-radius:.72em;background:rgba(238,243,239,.15);border:.12em solid rgba(255,255,255,.26);font-size:1.05em;text-align:center;box-sizing:border-box}.smart-recs-mood__button.focus{background:#eef3ef;color:#101612;border-color:#eef3ef;transform:scale(1.045)}',
-            '.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.58);font-size:.9em}.smart-recs-mood__status.hide{display:none}',
+            '.smart-recs-mood__bottom{position:absolute;left:4.2em;right:4.2em;bottom:3.3em;display:block}',
+            '.smart-recs-mood__info{max-width:75%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__eyebrow{font-size:.82em;letter-spacing:.09em;text-transform:uppercase;opacity:.66;margin-bottom:.6em}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650}.smart-recs-mood__overview{font-size:.9em;line-height:1.45;opacity:.76;margin-top:.75em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+            '.smart-recs-mood__actions{display:flex;gap:.8em;flex-shrink:0;margin-top:1.15em}.smart-recs-mood__button{min-width:7.6em;padding:.82em 1em;border-radius:.72em;background:rgba(238,243,239,.15);border:.12em solid rgba(255,255,255,.26);font-size:1.05em;text-align:center;box-sizing:border-box}.smart-recs-mood__button.focus{background:#eef3ef;color:#101612;border-color:#eef3ef;transform:scale(1.045)}',
+            '.smart-recs-mood__button--like.focus{background:#d5e7d9;border-color:#d5e7d9}.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.58);font-size:.9em}.smart-recs-mood__status.hide{display:none}',
             '@media(max-width:700px){.smart-recs-actions-row{display:grid;grid-template-columns:1fr 1fr}.smart-recs-filter-entry,.smart-recs-mood-entry{width:100%}.smart-recs-mood__top{left:1.4em;right:1.4em;top:1.3em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__overview{display:none}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
         ].join('');
         document.head.appendChild(style);
@@ -1700,9 +1700,10 @@
             '<div class="smart-recs-mood__top"><div class="smart-recs-mood__counter"></div><div class="smart-recs-mood__track"><span></span></div></div>' +
             '<div class="smart-recs-mood__status">Загружаем трейлер…</div>' +
             '<div class="smart-recs-mood__bottom"><div class="smart-recs-mood__info"><div class="smart-recs-mood__eyebrow"></div><div class="smart-recs-mood__title"></div><div class="smart-recs-mood__overview"></div></div>' +
-            '<div class="smart-recs-mood__actions"><div class="smart-recs-mood__button smart-recs-mood__button--watch selector">Смотреть</div><div class="smart-recs-mood__button smart-recs-mood__button--next selector">Дальше</div></div></div></div>');
+            '<div class="smart-recs-mood__actions"><div class="smart-recs-mood__button smart-recs-mood__button--watch selector">Смотреть</div><div class="smart-recs-mood__button smart-recs-mood__button--like selector">Нравится</div><div class="smart-recs-mood__button smart-recs-mood__button--next selector">Дальше</div></div></div></div>');
         var media = html.find('.smart-recs-mood__media');
         var watchButton = html.find('.smart-recs-mood__button--watch');
+        var likeButton = html.find('.smart-recs-mood__button--like');
         var nextButton = html.find('.smart-recs-mood__button--next');
         var current = null;
         var currentVideo = null;
@@ -1913,26 +1914,6 @@
             showNext();
         }
 
-        function openMoodTasteMenu() {
-            if (changing || !current) return;
-            post('pause');
-            Lampa.Select.show({
-                title: 'Оценить трейлер',
-                items: [
-                    { title: 'Нравится', action: 'like' },
-                    { title: 'Не нравится', action: 'next' }
-                ],
-                onSelect: function (item) {
-                    Lampa.Controller.toggle('smart_recs_mood');
-                    act(item.action);
-                },
-                onBack: function () {
-                    Lampa.Controller.toggle('smart_recs_mood');
-                    post('play');
-                }
-            });
-        }
-
         function onMessage(event) {
             if (!event.data || event.data.bridgeId !== bridgeId || destroyed) return;
             var type = event.data.type;
@@ -1970,6 +1951,7 @@
             if (Lampa.Background && Lampa.Background.theme) Lampa.Background.theme('black');
             window.addEventListener('message', onMessage);
             watchButton.on('hover:enter', function () { act('watch'); });
+            likeButton.on('hover:enter', function () { act('like'); });
             nextButton.on('hover:enter', function () { act('next'); });
             Lampa.Controller.add('smart_recs_mood', {
                 link: self,
@@ -1977,9 +1959,12 @@
                     Lampa.Controller.collectionSet(html);
                     Lampa.Controller.collectionFocus(nextButton, html);
                 },
-                left: function () { Lampa.Controller.focus(watchButton[0]); },
-                right: function () { act('next'); },
-                long: openMoodTasteMenu,
+                left: function () {
+                    Lampa.Controller.focus(nextButton.hasClass('focus') ? likeButton[0] : watchButton[0]);
+                },
+                right: function () {
+                    Lampa.Controller.focus(watchButton.hasClass('focus') ? likeButton[0] : nextButton[0]);
+                },
                 back: function () { self.finish(false); }
             });
             Lampa.Controller.toggle('smart_recs_mood');

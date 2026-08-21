@@ -107,11 +107,13 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.3.1');
+  assert.equal(context.window.LampaSmartRecs.version, '0.3.2');
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);
   assert.ok(storage.has('lampa_smart_recs_cache'));
+  assert.equal(storage.get('lampa_smart_recs_cache').payload.lines.length, 1);
+  assert.equal(storage.get('lampa_smart_recs_cache').payload.lines[0].title, 'Для вас');
 
   const moodReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_mood');
   const fullReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_all');

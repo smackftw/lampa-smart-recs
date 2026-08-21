@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.3.1
+ * Lampa Smart Recs v0.3.2
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.3.1';
+    var VERSION = '0.3.2';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -1007,47 +1007,15 @@
             });
         }
 
-        var selected = selectDiverse(entries, 24, mode);
+        var selected = selectDiverse(entries, 40, mode);
         var lines = [];
         if (selected.length) {
             lines.push({
-                title: profile.coldStart ? 'Популярно сейчас — отметьте любимое' : 'Для вас',
+                title: 'Для вас',
                 results: cards(selected),
                 nomore: true
             });
         }
-
-        positiveSignalsForFilters(profile).slice(0, 2).forEach(function (signal) {
-            var keys = pool.anchors[signal.key] || [];
-            var anchorEntries = keys.map(function (key) { return pool.items[key]; }).filter(function (entry) {
-                return entry && (!hideSeen || !profile.seen[entry.key]);
-            }).sort(function (left, right) { return right.score - left.score; });
-            anchorEntries = selectDiverse(anchorEntries, 16, mode);
-            if (anchorEntries.length >= 4) {
-                lines.push({
-                    title: 'Потому что вам нравится «' + titleOf(signal.card) + '»',
-                    results: cards(anchorEntries),
-                    nomore: true
-                });
-            }
-        });
-
-        var exploration = entries.filter(function (entry) {
-            return entry.exploration && affinityScore(entry.card, profile) < 0.45;
-        });
-        exploration = selectDiverse(exploration, 18, 'explore');
-        if (!profile.coldStart && exploration.length >= 5) {
-            lines.push({
-                title: 'Попробовать новое',
-                results: cards(exploration),
-                nomore: true
-            });
-        }
-
-        CONTENT_TYPES.forEach(function (type) {
-            var byKind = selected.filter(function (entry) { return contentKind(entry.card) === type.id; });
-            if (byKind.length >= 5) lines.push({ title: type.title + ' для вас', results: cards(byKind), nomore: true });
-        });
 
         return {
             lines: lines,
@@ -1197,12 +1165,12 @@
         var style = document.createElement('style');
         style.id = STYLE_ID;
         style.textContent = [
-            '.smart-recs-mood-entry{width:25em;height:11.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#e8eee9,#b9c8bd);color:#152019;display:flex;align-items:flex-end;position:relative;padding:1.5em;box-sizing:border-box}',
+            '.smart-recs-mood-entry{width:20em;height:8.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#e8eee9,#b9c8bd);color:#152019;display:flex;align-items:flex-end;position:relative;padding:1.25em;box-sizing:border-box}',
             '.smart-recs-mood-entry:after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 82% 16%,rgba(255,255,255,.75),transparent 34%)}',
             '.smart-recs-mood-entry__icon{position:absolute;right:1.1em;top:1em;width:4.2em;height:4.2em;opacity:.82}',
             '.smart-recs-mood-entry__text{position:relative;z-index:1}.smart-recs-mood-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-mood-entry__subtitle{font-size:.86em;opacity:.72;max-width:18em}',
             '.smart-recs-mood-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
-            '.smart-recs-filter-entry{width:25em;height:11.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#dfe5ee,#aebdce);color:#17202a;display:flex;align-items:flex-end;position:relative;padding:1.5em;box-sizing:border-box}',
+            '.smart-recs-filter-entry{width:20em;height:8.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#dfe5ee,#aebdce);color:#17202a;display:flex;align-items:flex-end;position:relative;padding:1.25em;box-sizing:border-box}',
             '.smart-recs-filter-entry:after{content:"";position:absolute;right:1.4em;top:1.2em;width:4.3em;height:4.3em;border:.22em solid currentColor;border-radius:50%;opacity:.16}',
             '.smart-recs-filter-entry__text{position:relative;z-index:1}.smart-recs-filter-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-filter-entry__subtitle{font-size:.82em;line-height:1.35;opacity:.72;max-width:21em}',
             '.smart-recs-filter-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
@@ -1268,6 +1236,10 @@
         card.render = function (js) { return js ? html[0] : html; };
         card.destroy = function () { if (html) html.remove(); };
         return card;
+    }
+
+    function RecommendationActionCard(data) {
+        return data && data.smart_recs_action === 'filters' ? FilterEntryCard(data) : MoodEntryCard(data);
     }
 
     function imageForCard(card) {
@@ -1705,6 +1677,11 @@
         });
     }
 
+    function openRecommendationAction(target, data) {
+        if (data && data.smart_recs_action === 'filters') editCurrentFilters();
+        else startMoodCalibration();
+    }
+
     function openTasteMenu(target, card) {
         var enabled = Lampa.Controller.enabled().name;
         Lampa.Select.show({
@@ -1743,20 +1720,15 @@
                     line.card_events = { onMenu: openTasteMenu };
                 });
                 lines.unshift({
-                    title: 'Быстрый выбор',
-                    results: [{ id: 'mood-calibration', media_type: 'movie' }],
+                    title: 'Настройка рекомендаций',
+                    results: [
+                        { id: 'filter-selection', media_type: 'movie', smart_recs_action: 'filters' },
+                        { id: 'mood-calibration', media_type: 'movie', smart_recs_action: 'mood' }
+                    ],
                     nomore: true,
-                    line_type: 'smart-recs-mood',
-                    cardClass: MoodEntryCard,
-                    card_events: { onEnter: startMoodCalibration }
-                });
-                lines.unshift({
-                    title: 'Сейчас показываем',
-                    results: [{ id: 'filter-selection', media_type: 'movie' }],
-                    nomore: true,
-                    line_type: 'smart-recs-filter',
-                    cardClass: FilterEntryCard,
-                    card_events: { onEnter: editCurrentFilters }
+                    line_type: 'smart-recs-actions',
+                    cardClass: RecommendationActionCard,
+                    card_events: { onEnter: openRecommendationAction }
                 });
                 self.build(lines);
                 if (!readFilters().configured) {

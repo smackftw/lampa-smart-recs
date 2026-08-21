@@ -139,9 +139,14 @@ async function inspect() {
       filterEntry: document.querySelectorAll('.smart-recs-filter-entry').length,
       entry: document.querySelectorAll('.smart-recs-mood-entry').length,
       title: document.querySelector('.smart-recs-mood-entry__title')?.textContent || '',
-      filterSummary: document.querySelector('.smart-recs-filter-entry__subtitle')?.textContent || ''
+      filterSummary: document.querySelector('.smart-recs-filter-entry__subtitle')?.textContent || '',
+      sameRow: (() => {
+        const filter = document.querySelector('.smart-recs-filter-entry');
+        const mood = document.querySelector('.smart-recs-mood-entry');
+        return Boolean(filter && mood && filter.closest('.items-line') === mood.closest('.items-line'));
+      })()
     })`);
-    if (recommendationScreen.entry && recommendationScreen.filterEntry) break;
+    if (recommendationScreen.entry && recommendationScreen.filterEntry && recommendationScreen.sameRow) break;
     await delay(250);
   }
 
@@ -419,8 +424,8 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.3.1' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
-      report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 ||
+    if (report.state?.plugin !== '0.3.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+      report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
       report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||

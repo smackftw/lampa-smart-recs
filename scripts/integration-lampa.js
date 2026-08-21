@@ -278,7 +278,7 @@ async function inspect() {
   try {
     const report = await inspect();
     console.log(JSON.stringify(report, null, 2));
-    if (report.state?.plugin !== '0.2.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.2.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.moodScreen?.overlay !== 1 ||
       !report.tasteMenu?.opened || report.tasteMenu?.title !== 'Оценить рекомендацию' ||
       report.tasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||

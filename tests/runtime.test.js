@@ -8,6 +8,7 @@ test('boots against the current public Lampa plugin surface', async () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'smart-recs.js'), 'utf8');
   const storage = new Map();
   const settings = new Map();
+  const settingDefinitions = [];
   const components = new Map();
   const rows = [];
   const pluginMenus = [];
@@ -40,8 +41,8 @@ test('boots against the current public Lampa plugin surface', async () => {
       set(name, value) { storage.set(name, value); },
       field(name) { return storage.has(name) ? storage.get(name) : settings.get(name); },
     },
-    Favorite: { get() { return []; }, listener: listener() },
-    Timeline: { watched() { return 0; }, listener: listener() },
+    Favorite: { get() { throw new Error('Favorite must not be read'); }, listener: listener() },
+    Timeline: { watched() { throw new Error('Timeline must not be read'); }, listener: listener() },
     Api: {
       sources: {
         tmdb: {
@@ -62,10 +63,11 @@ test('boots against the current public Lampa plugin surface', async () => {
         },
       },
     },
-    Recomends: { get() { return []; } },
+    Recomends: { get() { throw new Error('Native recommendations must not be read'); } },
     SettingsApi: {
       addComponent() {},
       addParam(definition) {
+        settingDefinitions.push(definition);
         settings.set(definition.param.name, definition.param.default);
       },
     },
@@ -75,6 +77,11 @@ test('boots against the current public Lampa plugin surface', async () => {
     Listener: listener(),
     Activity: { push() {} },
     Noty: { show() {} },
+    Controller: {
+      enabled() { return { name: 'settings' }; },
+      toggle() {},
+    },
+    Select: { show(definition) { lampa.lastSelect = definition; } },
     Input: { edit() {} },
     InteractionMain: function InteractionMain() {},
   };
@@ -100,9 +107,30 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.2.2');
+  assert.equal(context.window.LampaSmartRecs.version, '0.2.3');
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);
   assert.ok(storage.has('lampa_smart_recs_cache'));
+
+  const moodReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_mood');
+  const fullReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_all');
+  assert.equal(moodReset.field.name, 'Сбросить текущее настроение');
+  assert.equal(fullReset.field.name, 'Начать рекомендации с нуля');
+  assert.equal(settingDefinitions.some((item) => item.param.name === 'lampa_smart_recs_clear_feedback'), false);
+
+  storage.set('lampa_smart_recs_feedback', { schema: 1, items: { movie: { value: 1 } } });
+  storage.set('lampa_smart_recs_mood', { schema: 1, active: { records: [1] }, draft: { records: [2] } });
+  moodReset.onChange();
+  assert.equal(Object.keys(storage.get('lampa_smart_recs_feedback').items).length, 1);
+  assert.equal(storage.get('lampa_smart_recs_mood').active, null);
+  assert.equal(storage.get('lampa_smart_recs_mood').draft, null);
+
+  storage.set('lampa_smart_recs_mood', { schema: 1, active: { records: [1] }, draft: null });
+  fullReset.onChange();
+  assert.equal(lampa.lastSelect.title, 'Начать рекомендации с нуля?');
+  lampa.lastSelect.onSelect(lampa.lastSelect.items[0]);
+  assert.equal(Object.keys(storage.get('lampa_smart_recs_feedback').items).length, 0);
+  assert.equal(storage.get('lampa_smart_recs_mood').active, null);
+  assert.equal(Object.keys(storage.get('lampa_smart_recs_cache')).length, 0);
 });

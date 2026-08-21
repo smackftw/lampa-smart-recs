@@ -52,14 +52,16 @@ test('detects media type and strips unknown fields from stored cards', () => {
   assert.equal(compact.private_token, undefined);
 });
 
-test('builds positive and negative taste signals from Lampa lists', () => {
+test('builds positive and negative taste signals only from plugin feedback', () => {
   const liked = movie(1, [878, 12], { title: 'Liked sci-fi' });
   const disliked = movie(2, [27], { title: 'Dropped horror' });
-  const profile = core.buildProfileFromData({
-    like: [liked],
-    history: [liked, disliked],
-    thrown: [disliked],
-  }, { schema: 1, items: {} }, (card) => card.id === 1 ? 95 : 20);
+  const profile = core.buildProfileFromFeedback({
+    schema: 1,
+    items: {
+      'movie:1': { value: 1, card: liked },
+      'movie:2': { value: -1, card: disliked },
+    },
+  });
 
   assert.equal(profile.coldStart, false);
   assert.ok(profile.genreWeights.movie[878] > 0);
@@ -68,24 +70,29 @@ test('builds positive and negative taste signals from Lampa lists', () => {
   assert.equal(profile.seen['movie:2'], true);
 });
 
-test('manual feedback overrides a weak history signal', () => {
+test('negative plugin feedback creates a negative taste signal', () => {
   const card = movie(5, [35]);
-  const profile = core.buildProfileFromData({ history: [card] }, {
+  const profile = core.buildProfileFromFeedback({
     schema: 1,
     items: {
       'movie:5': { value: -1, card },
     },
-  }, () => 0);
+  });
 
   assert.ok(profile.negative.some((signal) => signal.key === 'movie:5'));
   assert.ok(profile.genreWeights.movie[35] < 0);
 });
 
 test('ranks candidates matching positive taste above disliked genres', () => {
-  const profile = core.buildProfileFromData({
-    like: [movie(1, [878])],
-    thrown: [movie(2, [27])],
-  }, { schema: 1, items: {} }, () => 0);
+  const liked = movie(1, [878]);
+  const disliked = movie(2, [27]);
+  const profile = core.buildProfileFromFeedback({
+    schema: 1,
+    items: {
+      'movie:1': { value: 1, card: liked },
+      'movie:2': { value: -1, card: disliked },
+    },
+  });
 
   const likedEntry = { key: 'movie:10', card: movie(10, [878]), sourceScore: 1, exploration: false };
   const dislikedEntry = { key: 'movie:11', card: movie(11, [27]), sourceScore: 1, exploration: false };

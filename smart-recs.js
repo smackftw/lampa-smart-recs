@@ -1,12 +1,12 @@
 /**
- * Lampa Smart Recs v0.2.2
+ * Lampa Smart Recs v0.2.3
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.2.2';
+    var VERSION = '0.2.3';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -19,18 +19,6 @@
     var COMPONENT = 'lampa_smart_recs';
     var MENU_CLASS = 'lampa-smart-recs-menu';
     var STYLE_ID = 'lampa-smart-recs-style';
-
-    var CATEGORY_WEIGHTS = {
-        like: 6,
-        viewed: 5,
-        look: 3,
-        continued: 2.5,
-        book: 2,
-        wath: 2,
-        scheduled: 1.5,
-        history: 1.2,
-        thrown: -7
-    };
 
     var runtime = {
         initialized: false,
@@ -220,28 +208,11 @@
         return map;
     }
 
-    function progressAdjustment(type, card, progressResolver) {
-        if (type !== 'history' || typeof progressResolver !== 'function') return 0;
-        var progress;
-        try {
-            progress = asNumber(progressResolver(card), 0);
-        } catch (error) {
-            progress = 0;
-        }
-
-        if (mediaType(card) === 'tv') return progress > 0 ? Math.min(2, progress * 0.25) : 0;
-        if (progress >= 85) return 3;
-        if (progress >= 55) return 1.5;
-        if (progress >= 10 && progress <= 40) return -1.5;
-        return 0;
-    }
-
-    function buildProfileFromData(lists, feedback, progressResolver) {
+    function buildProfileFromFeedback(feedback) {
         var signalMap = {};
         var seen = {};
         var genreWeights = { movie: {}, tv: {} };
         var languageWeights = {};
-        var types = Object.keys(CATEGORY_WEIGHTS);
 
         function addSignal(card, weight, origin, order) {
             var safe = compactCard(card);
@@ -262,20 +233,6 @@
             signal.origins.push(origin);
             signalMap[key] = signal;
         }
-
-        types.forEach(function (type) {
-            asArray(lists[type]).forEach(function (card, index) {
-                var recency = Math.max(0, 0.35 - index * 0.012);
-                var weight = CATEGORY_WEIGHTS[type];
-                weight += weight >= 0 ? recency : -recency;
-                weight += progressAdjustment(type, card, progressResolver);
-                addSignal(card, weight, type, index);
-
-                if (type === 'history' || type === 'viewed' || type === 'like' || type === 'thrown') {
-                    seen[cardKey(card)] = true;
-                }
-            });
-        });
 
         feedback = feedback && feedback.items || {};
         Object.keys(feedback).forEach(function (key) {
@@ -411,7 +368,7 @@
         cardKey: cardKey,
         genreIds: genreIds,
         compactCard: compactCard,
-        buildProfileFromData: buildProfileFromData,
+        buildProfileFromFeedback: buildProfileFromFeedback,
         affinityScore: affinityScore,
         qualityScore: qualityScore,
         scoreCandidate: scoreCandidate,
@@ -529,35 +486,37 @@
         if (!quiet) notify(value > 0 ? 'Нравится — лента обновится' : 'Не нравится — лента обновится');
     }
 
-    function clearFeedback() {
-        storageSet('feedback', { schema: FEEDBACK_SCHEMA, items: {} });
-        clearCache();
-        notify('Оценки «нравится / не нравится» очищены');
-    }
-
     function clearMood() {
         storageSet('mood', emptyMoodStore());
         clearCache();
         notify('Текущее настроение сброшено');
     }
 
-    function favoriteList(type) {
-        try {
-            return asArray(Lampa.Favorite.get({ type: type }));
-        } catch (error) {
-            return [];
-        }
+    function clearAllRecommendations() {
+        storageSet('feedback', { schema: FEEDBACK_SCHEMA, items: {} });
+        storageSet('mood', emptyMoodStore());
+        clearCache();
+        notify('Все оценки удалены — рекомендации начнутся с нуля');
+    }
+
+    function confirmClearAllRecommendations() {
+        var enabled = Lampa.Controller.enabled().name;
+        Lampa.Select.show({
+            title: 'Начать рекомендации с нуля?',
+            items: [
+                { title: 'Удалить все оценки', value: 'clear' },
+                { title: 'Отмена', value: 'cancel' }
+            ],
+            onSelect: function (item) {
+                if (item.value === 'clear') clearAllRecommendations();
+                Lampa.Controller.toggle(enabled);
+            },
+            onBack: function () { Lampa.Controller.toggle(enabled); }
+        });
     }
 
     function buildRuntimeProfile() {
-        var lists = {};
-        Object.keys(CATEGORY_WEIGHTS).forEach(function (type) {
-            lists[type] = favoriteList(type);
-        });
-        var profile = buildProfileFromData(lists, learningFeedback(), function (card) {
-            if (!Lampa.Timeline || !Lampa.Timeline.watched) return 0;
-            return Lampa.Timeline.watched(card, false);
-        });
+        var profile = buildProfileFromFeedback(learningFeedback());
         profile.signature = simpleHash([
             profile.signature,
             setting('mode', 'balanced'),
@@ -670,16 +629,6 @@
             }
         });
     };
-
-    function nativeRecommendations(pool) {
-        if (!Lampa.Recomends || !Lampa.Recomends.get) return;
-        try {
-            pool.add(Lampa.Recomends.get('movie'), { mediaType: 'movie', weight: 1.1, reason: 'Lampa' });
-            pool.add(Lampa.Recomends.get('tv'), { mediaType: 'tv', weight: 1.1, reason: 'Lampa' });
-        } catch (error) {
-            console.warn('[SmartRecs] Native recommendations unavailable:', error);
-        }
-    }
 
     function topGenres(profile, type, limit) {
         var weights = profile.genreWeights[type] || {};
@@ -844,7 +793,6 @@
 
     function generateRecommendations(profile, callback) {
         var pool = new CandidatePool(profile);
-        nativeRecommendations(pool);
         runQueue(recommendationTasks(profile, pool), 3, function () {
             callback(finalizeCandidates(profile, pool));
         });
@@ -1444,7 +1392,7 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: { name: PREFIX + 'hide_seen', type: 'trigger', default: true },
-            field: { name: 'Скрывать просмотренное' },
+            field: { name: 'Скрывать уже оценённое' },
             onChange: clearCache
         });
         Lampa.SettingsApi.addParam({
@@ -1466,22 +1414,22 @@
         });
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
-            param: { name: PREFIX + 'clear_feedback', type: 'button' },
-            field: { name: 'Очистить «нравится / не нравится»', description: 'История и обычные закладки Lampa не удаляются.' },
-            onChange: clearFeedback
+            param: { name: PREFIX + 'clear_mood', type: 'button' },
+            field: { name: 'Сбросить текущее настроение', description: 'Удалить только временную сессию трейлеров. Постоянный вкус сохранится.' },
+            onChange: clearMood
         });
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
-            param: { name: PREFIX + 'clear_mood', type: 'button' },
-            field: { name: 'Сбросить текущее настроение', description: 'Постоянная история и отметки Lampa сохранятся.' },
-            onChange: clearMood
+            param: { name: PREFIX + 'clear_all', type: 'button' },
+            field: { name: 'Начать рекомендации с нуля', description: 'Удалить все оценки и текущее настроение.' },
+            onChange: confirmClearAllRecommendations
         });
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: { name: PREFIX + 'privacy', type: 'static' },
             field: {
                 name: 'Приватность · версия ' + VERSION,
-                description: 'Профиль и полная история никуда не загружаются. ID опорных фильмов запрашиваются через встроенный TMDB-клиент Lampa.'
+                description: 'Оценки и профиль никуда не загружаются. ID опорных фильмов запрашиваются через встроенный TMDB-клиент Lampa.'
             }
         });
         Lampa.SettingsApi.addParam({
@@ -1509,19 +1457,6 @@
                     });
                 };
             }
-        });
-    }
-
-    function invalidateOnTasteChange() {
-        function invalidate() { clearCache(); }
-        if (Lampa.Favorite && Lampa.Favorite.listener) {
-            Lampa.Favorite.listener.follow('add,remove,added', invalidate);
-        }
-        if (Lampa.Timeline && Lampa.Timeline.listener) {
-            Lampa.Timeline.listener.follow('update', invalidate);
-        }
-        Lampa.Listener.follow('state:changed', function (event) {
-            if (event && (event.target === 'favorite' || event.target === 'timeline')) invalidate();
         });
     }
 
@@ -1597,7 +1532,6 @@
         Lampa.Component.add(COMPONENT, RecommendationsComponent);
         registerSettings();
         registerHomeRow();
-        invalidateOnTasteChange();
         updateMenu();
 
         setTimeout(function () {
@@ -1612,8 +1546,8 @@
         open: openRecommendations,
         calibrate: startMoodCalibration,
         refresh: refresh,
-        clearFeedback: clearFeedback,
         clearMood: clearMood,
+        resetAll: clearAllRecommendations,
         registerProtectedFeature: registerProtectedFeature,
         runProtectedFeature: runProtectedFeature
     };

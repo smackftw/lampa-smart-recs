@@ -52,6 +52,28 @@ test('detects media type and strips unknown fields from stored cards', () => {
   assert.equal(compact.private_token, undefined);
 });
 
+test('separates live action, anime, and other animation', () => {
+  assert.equal(core.contentKind(movie(1, [18])), 'movie');
+  assert.equal(core.contentKind(movie(2, [16, 878], { original_language: 'ja' })), 'anime');
+  assert.equal(core.contentKind(movie(3, [16, 35], { original_language: 'en' })), 'cartoon');
+  assert.equal(core.contentKind(movie(4, [18], { media_type: 'tv' })), 'tv');
+});
+
+test('applies type, tri-state genre, and rating filters', () => {
+  const filters = core.normalizeFilters({
+    schema: 1,
+    configured: true,
+    types: { movie: true, tv: false, anime: false, cartoon: false },
+    genres: { action: 1, horror: -1 },
+    rating: 7,
+  });
+
+  assert.equal(core.matchesFilters(movie(10, [28], { vote_average: 7.4, vote_count: 500 }), filters), true);
+  assert.equal(core.matchesFilters(movie(11, [28, 27], { vote_average: 8, vote_count: 500 }), filters), false);
+  assert.equal(core.matchesFilters(movie(12, [28], { vote_average: 6.9, vote_count: 500 }), filters), false);
+  assert.equal(core.matchesFilters(movie(13, [28], { media_type: 'tv', vote_average: 8, vote_count: 500 }), filters), false);
+});
+
 test('builds positive and negative taste signals only from plugin feedback', () => {
   const liked = movie(1, [878, 12], { title: 'Liked sci-fi' });
   const disliked = movie(2, [27], { title: 'Dropped horror' });
@@ -81,6 +103,25 @@ test('negative plugin feedback creates a negative taste signal', () => {
 
   assert.ok(profile.negative.some((signal) => signal.key === 'movie:5'));
   assert.ok(profile.genreWeights.movie[35] < 0);
+});
+
+test('keeps content-specific taste alongside the broad profile', () => {
+  const anime = movie(6, [16, 878], { original_language: 'ja' });
+  const liveMovie = movie(7, [878], { original_language: 'en' });
+  const profile = core.buildProfileFromFeedback({
+    schema: 1,
+    items: {
+      anime: { value: 1, card: anime },
+      movie: { value: -1, card: liveMovie },
+    },
+  });
+
+  assert.ok(profile.kindGenreWeights.anime[878] > 0);
+  assert.ok(profile.kindGenreWeights.movie[878] < 0);
+  assert.equal(profile.kindSignalCounts.anime, 1);
+  assert.equal(profile.kindSignalCounts.movie, 1);
+  assert.ok(profile.kindWeights.anime > 0);
+  assert.ok(profile.kindWeights.movie < 0);
 });
 
 test('ranks candidates matching positive taste above disliked genres', () => {

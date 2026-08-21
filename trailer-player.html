@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Smart Recs trailer player</title>
+  <style>
+    html,body,#player{width:100%;height:100%;margin:0;overflow:hidden;background:#000}
+    iframe{border:0}
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <script>
+    (function () {
+      'use strict';
+
+      function query(name) {
+        var match = new RegExp('[?&]' + name + '=([^&#]*)').exec(location.href);
+        return match ? decodeURIComponent(match[1]) : '';
+      }
+
+      var bridgeId = query('bridgeId');
+      var videoId = query('videoId');
+      var startAt = Number(query('start') || 0);
+      var autoplay = query('autoplay') !== '0';
+      var sequence = Number(query('sequence') || 0);
+      var volume = 100;
+      var player = null;
+      var playerReady = false;
+      var creating = false;
+      var timer = null;
+      var apiPoll = null;
+      var pendingLoad = null;
+
+      function send(type, data) {
+        data = data || {};
+        data.sequence = sequence;
+        try {
+          parent.postMessage({ bridgeId: bridgeId, type: type, data: data }, '*');
+        } catch (error) {}
+      }
+
+      function stopTimer() {
+        if (timer) clearInterval(timer);
+        timer = null;
+      }
+
+      function tick() {
+        if (!player || !playerReady) return;
+        try {
+          send('time', {
+            currentTime: player.getCurrentTime(),
+            duration: player.getDuration(),
+            playerState: player.getPlayerState()
+          });
+        } catch (error) {}
+      }
+
+      function applyLoad(data) {
+        if (!data) return;
+        videoId = data.videoId || videoId;
+        startAt = Number(data.start || 0);
+        autoplay = data.autoplay !== false;
+        if (typeof data.sequence === 'number') sequence = data.sequence;
+        pendingLoad = null;
+        send('loading');
+        if (!player || !playerReady) {
+          pendingLoad = data;
+          return;
+        }
+        try {
+          if (autoplay) player.loadVideoById({ videoId: videoId, startSeconds: startAt });
+          else player.cueVideoById({ videoId: videoId, startSeconds: startAt });
+          player.setVolume(volume);
+        } catch (error) {
+          send('error', { error: 'load_failed' });
+        }
+      }
+
+      function createPlayer() {
+        if (creating || player || !window.YT || typeof window.YT.Player !== 'function') return;
+        creating = true;
+        player = new window.YT.Player('player', {
+          videoId: videoId,
+          width: '100%',
+          height: '100%',
+          playerVars: {
+            autoplay: autoplay ? 1 : 0,
+            controls: 0,
+            mute: 0,
+            start: startAt,
+            rel: 0,
+            modestbranding: 1,
+            playsinline: 1,
+            enablejsapi: 1,
+            origin: location.origin
+          },
+          events: {
+            onReady: function () {
+              playerReady = true;
+              try { player.setVolume(volume); } catch (error) {}
+              send('ready');
+              stopTimer();
+              timer = setInterval(tick, 250);
+              if (pendingLoad) applyLoad(pendingLoad);
+              else if (autoplay) {
+                try { player.playVideo(); } catch (error) {}
+              }
+            },
+            onStateChange: function (event) {
+              send('stateChange', { state: event.data });
+            },
+            onError: function (event) {
+              send('error', { error: event.data });
+            }
+          }
+        });
+      }
+
+      window.onYouTubeIframeAPIReady = createPlayer;
+      apiPoll = setInterval(function () {
+        if (window.YT && typeof window.YT.Player === 'function') {
+          clearInterval(apiPoll);
+          apiPoll = null;
+          createPlayer();
+        }
+      }, 100);
+
+      window.addEventListener('message', function (event) {
+        if (!event.data || event.data.bridgeId !== bridgeId) return;
+        var type = event.data.type;
+        var data = event.data.data || {};
+
+        if (type === 'init') {
+          if (typeof data.volume === 'number') volume = data.volume;
+          if (player && playerReady) {
+            try { player.setVolume(volume); } catch (error) {}
+          }
+          return;
+        }
+        if (type === 'load') return applyLoad(data);
+        if (!player || !playerReady) return;
+
+        try {
+          if (type === 'play') player.playVideo();
+          else if (type === 'pause') player.pauseVideo();
+          else if (type === 'seekTo') player.seekTo(Number(data.time || 0), true);
+          else if (type === 'setVolume') {
+            volume = Number(data.volume || 0);
+            player.setVolume(volume);
+          } else if (type === 'destroy') {
+            stopTimer();
+            player.destroy();
+            player = null;
+            playerReady = false;
+          }
+        } catch (error) {}
+      });
+
+      window.addEventListener('unload', stopTimer);
+      send('bridgeReady');
+
+      var script = document.createElement('script');
+      script.src = 'https://www.youtube.com/iframe_api';
+      script.async = true;
+      document.head.appendChild(script);
+    })();
+  </script>
+</body>
+</html>

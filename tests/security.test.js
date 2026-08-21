@@ -3,7 +3,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 
-const source = fs.readFileSync(path.join(__dirname, '..', 'smart-recs.js'), 'utf8');
+const source = ['smart-recs.js', 'trailer-player.html']
+  .map((file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8'))
+  .join('\n');
 
 test('distribution does not contain common secret formats', () => {
   assert.doesNotMatch(source, /\bsk-[A-Za-z0-9_-]{16,}\b/);

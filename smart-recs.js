@@ -1,15 +1,19 @@
 /**
- * Lampa Smart Recs v0.2.3
+ * Lampa Smart Recs v0.3.0
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.2.3';
+    var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
+    var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
+    var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
+    var VERSION = '0.3.0';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
+    var FILTER_SCHEMA = 1;
     var MOOD_MINIMUM = 10;
     var MOOD_MAXIMUM = 60;
     var MOOD_TTL = 6 * 60 * 60 * 1000;
@@ -20,12 +24,29 @@
     var MENU_CLASS = 'lampa-smart-recs-menu';
     var STYLE_ID = 'lampa-smart-recs-style';
 
+    var CONTENT_TYPES = [
+        { id: 'movie', title: 'Фильмы' },
+        { id: 'tv', title: 'Сериалы' },
+        { id: 'anime', title: 'Аниме' },
+        { id: 'cartoon', title: 'Мультфильмы' }
+    ];
+    var FILTER_GENRES = [
+        { id: 'science_fiction', title: 'Фантастика', movie: [878], tv: [10765] },
+        { id: 'action', title: 'Боевик', movie: [28], tv: [10759] },
+        { id: 'drama', title: 'Драма', movie: [18], tv: [18] },
+        { id: 'romance', title: 'Мелодрама', movie: [10749], tv: [10766] },
+        { id: 'thriller', title: 'Триллер', movie: [53], tv: [80, 9648] },
+        { id: 'horror', title: 'Ужасы', movie: [27], tv: [9648] },
+        { id: 'comedy', title: 'Комедия', movie: [35], tv: [35] }
+    ];
+
     var runtime = {
         initialized: false,
         menuButton: null,
         inFlight: null,
         mood: null,
         moodLoading: false,
+        filterPromptOpen: false,
         protectedFeatures: {},
         sessions: {}
     };
@@ -103,6 +124,7 @@
             backdrop_path: card.backdrop_path || '',
             genre_ids: genreIds(card),
             original_language: card.original_language || '',
+            origin_country: asArray(card.origin_country).slice(0, 4),
             adult: card.adult === true,
             source: 'tmdb'
         };
@@ -111,6 +133,78 @@
         if (result.media_type === 'movie' && !result.title) result.title = result.name;
         if (card.number_of_seasons) result.number_of_seasons = asNumber(card.number_of_seasons, 0);
         return result;
+    }
+
+    function contentKind(card) {
+        var animated = genreIds(card).indexOf(16) >= 0;
+        var japanese = card && card.original_language === 'ja' || asArray(card && card.origin_country).indexOf('JP') >= 0;
+        if (animated && japanese) return 'anime';
+        if (animated) return 'cartoon';
+        return mediaType(card) === 'tv' ? 'tv' : 'movie';
+    }
+
+    function defaultFilters(configured) {
+        return {
+            schema: FILTER_SCHEMA,
+            configured: configured === true,
+            types: { movie: true, tv: true, anime: true, cartoon: true },
+            genres: {
+                science_fiction: 0,
+                action: 0,
+                drama: 0,
+                romance: 0,
+                thriller: 0,
+                horror: 0,
+                comedy: 0
+            },
+            rating: 0
+        };
+    }
+
+    function normalizeFilters(value) {
+        var result = defaultFilters(Boolean(value && value.configured));
+        if (!value || value.schema !== FILTER_SCHEMA) return result;
+        CONTENT_TYPES.forEach(function (type) {
+            result.types[type.id] = Boolean(value.types && value.types[type.id]);
+        });
+        if (!CONTENT_TYPES.some(function (type) { return result.types[type.id]; })) {
+            result.types = defaultFilters(false).types;
+        }
+        FILTER_GENRES.forEach(function (genre) {
+            var state = asNumber(value.genres && value.genres[genre.id], 0);
+            result.genres[genre.id] = state > 0 ? 1 : state < 0 ? -1 : 0;
+        });
+        result.rating = [0, 5, 6, 7, 8].indexOf(asNumber(value.rating, 0)) >= 0 ? asNumber(value.rating, 0) : 0;
+        return result;
+    }
+
+    function filterGenreIds(filterGenre, type) {
+        return asArray(filterGenre && filterGenre[type]);
+    }
+
+    function cardHasFilterGenre(card, filterGenre) {
+        var ids = filterGenreIds(filterGenre, mediaType(card));
+        var cardGenres = genreIds(card);
+        return ids.some(function (id) { return cardGenres.indexOf(id) >= 0; });
+    }
+
+    function matchesFilters(card, filters) {
+        filters = normalizeFilters(filters);
+        if (!filters.types[contentKind(card)]) return false;
+        if (filters.rating > 0) {
+            if (asNumber(card && card.vote_average, 0) < filters.rating) return false;
+            if (asNumber(card && card.vote_count, 0) < (mediaType(card) === 'movie' ? 100 : 50)) return false;
+        }
+        var wanted = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] > 0; });
+        var excluded = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] < 0; });
+        if (wanted.length && !wanted.some(function (genre) { return cardHasFilterGenre(card, genre); })) return false;
+        if (excluded.some(function (genre) { return cardHasFilterGenre(card, genre); })) return false;
+        return true;
+    }
+
+    function filterSignature(filters) {
+        filters = normalizeFilters(filters);
+        return simpleHash(JSON.stringify({ types: filters.types, genres: filters.genres, rating: filters.rating }));
     }
 
     function titleOf(card) {
@@ -161,11 +255,11 @@
     }
 
     function buildMoodTaste(records) {
-        var taste = { genres: {}, types: { movie: 0, tv: 0 }, maximum: 0 };
+        var taste = { genres: {}, types: { movie: 0, tv: 0, anime: 0, cartoon: 0 }, maximum: 0 };
         asArray(records).forEach(function (record) {
             if (!record || !record.card) return;
             var weight = clamp(asNumber(record.weight, 0), -10, 10);
-            taste.types[mediaType(record.card)] += weight;
+            taste.types[contentKind(record.card)] += weight;
             genreIds(record.card).forEach(function (genre) {
                 taste.genres[genre] = (taste.genres[genre] || 0) + weight;
                 taste.maximum = Math.max(taste.maximum, Math.abs(taste.genres[genre]));
@@ -180,7 +274,7 @@
         genres.forEach(function (genre) { affinity += taste.genres[genre] || 0; });
         if (genres.length && taste.maximum) affinity /= taste.maximum * Math.min(genres.length, 3);
         var base = clamp(asNumber(card && card.smart_recs_score, 50) / 100, 0, 1);
-        var typeBias = clamp((taste.types[mediaType(card)] || 0) / 30, -1, 1);
+        var typeBias = clamp((taste.types[contentKind(card)] || 0) / 30, -1, 1);
         var jitter = (parseInt(simpleHash(cardKey(card)), 36) % 100) / 10000;
         return base * 0.36 + affinity * 0.50 + typeBias * 0.09 + qualityScore(card) * 0.05 + jitter;
     }
@@ -212,6 +306,9 @@
         var signalMap = {};
         var seen = {};
         var genreWeights = { movie: {}, tv: {} };
+        var kindGenreWeights = { movie: {}, tv: {}, anime: {}, cartoon: {} };
+        var kindSignalCounts = { movie: 0, tv: 0, anime: 0, cartoon: 0 };
+        var kindWeights = { movie: 0, tv: 0, anime: 0, cartoon: 0 };
         var languageWeights = {};
 
         function addSignal(card, weight, origin, order) {
@@ -246,10 +343,15 @@
         var signals = Object.keys(signalMap).map(function (key) {
             var signal = signalMap[key];
             var type = mediaType(signal.card);
+            var kind = contentKind(signal.card);
             var contribution = clamp(signal.weight, -10, 10);
             genreIds(signal.card).forEach(function (genre) {
                 genreWeights[type][genre] = (genreWeights[type][genre] || 0) + contribution;
+                kindGenreWeights[kind][genre] = (kindGenreWeights[kind][genre] || 0) + contribution;
             });
+            kindSignalCounts[kind] += 1;
+            kindWeights[kind] += contribution;
+            signal.kind = kind;
             if (signal.card.original_language) {
                 languageWeights[signal.card.original_language] = (languageWeights[signal.card.original_language] || 0) + contribution;
             }
@@ -259,6 +361,8 @@
 
         normalizeMap(genreWeights.movie);
         normalizeMap(genreWeights.tv);
+        CONTENT_TYPES.forEach(function (type) { normalizeMap(kindGenreWeights[type.id]); });
+        normalizeMap(kindWeights);
         normalizeMap(languageWeights);
 
         signals.sort(function (left, right) {
@@ -278,6 +382,9 @@
             negative: negative,
             seen: seen,
             genreWeights: genreWeights,
+            kindGenreWeights: kindGenreWeights,
+            kindSignalCounts: kindSignalCounts,
+            kindWeights: kindWeights,
             languageWeights: languageWeights,
             signature: simpleHash(signatureParts.sort().join('|')),
             coldStart: positive.length === 0
@@ -302,11 +409,20 @@
 
     function affinityScore(card, profile) {
         var weights = profile.genreWeights[mediaType(card)] || {};
+        var kind = contentKind(card);
+        var kindWeights = profile.kindGenreWeights && profile.kindGenreWeights[kind] || {};
+        var confidence = clamp(asNumber(profile.kindSignalCounts && profile.kindSignalCounts[kind], 0) / 4, 0, 1);
         var genres = genreIds(card);
-        var sum = 0;
+        var broad = 0;
+        var specific = 0;
         if (!genres.length) return 0;
-        genres.forEach(function (genre) { sum += weights[genre] || 0; });
-        return clamp(sum / Math.max(1, Math.min(genres.length, 3)), -1, 1);
+        genres.forEach(function (genre) {
+            broad += weights[genre] || 0;
+            specific += kindWeights[genre] || 0;
+        });
+        broad /= Math.max(1, Math.min(genres.length, 3));
+        specific /= Math.max(1, Math.min(genres.length, 3));
+        return clamp(broad * (1 - confidence * 0.65) + specific * confidence * 0.65, -1, 1);
     }
 
     function scoreCandidate(entry, profile, mode, maximumSource) {
@@ -318,6 +434,7 @@
         var source = maximumSource ? clamp(entry.sourceScore / maximumSource, 0, 1) : 0;
         var affinity = affinityScore(entry.card, profile);
         var language = profile.languageWeights[entry.card.original_language] || 0;
+        var kindPreference = profile.kindWeights && profile.kindWeights[contentKind(entry.card)] || 0;
         var exploration = entry.exploration ? 1 : 0;
         var deterministicJitter = (parseInt(simpleHash(entry.key + profile.signature), 36) % 100) / 10000;
 
@@ -327,6 +444,7 @@
             + weights.fresh * freshnessScore(entry.card)
             + weights.explore * exploration
             + 0.025 * Math.max(-1, language)
+            + 0.04 * kindPreference
             + deterministicJitter;
     }
 
@@ -368,6 +486,10 @@
         cardKey: cardKey,
         genreIds: genreIds,
         compactCard: compactCard,
+        contentKind: contentKind,
+        normalizeFilters: normalizeFilters,
+        matchesFilters: matchesFilters,
+        filterSignature: filterSignature,
         buildProfileFromFeedback: buildProfileFromFeedback,
         affinityScore: affinityScore,
         qualityScore: qualityScore,
@@ -449,6 +571,37 @@
         return mood;
     }
 
+    function readFilters() {
+        return normalizeFilters(storageGet('filters', defaultFilters(false)));
+    }
+
+    function saveFilters(filters) {
+        var previous = readFilters();
+        var next = normalizeFilters(filters);
+        var changed = filterSignature(previous) !== filterSignature(next);
+        next.configured = true;
+        storageSet('filters', next);
+        if (changed) {
+            var mood = readMoodStore();
+            mood.draft = null;
+            storageSet('mood', mood);
+            clearCache();
+        }
+        return changed;
+    }
+
+    function filterSummary(filters) {
+        filters = normalizeFilters(filters);
+        var selectedTypes = CONTENT_TYPES.filter(function (type) { return filters.types[type.id]; }).map(function (type) { return type.title; });
+        var wanted = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] > 0; }).map(function (genre) { return genre.title.toLowerCase(); });
+        var excluded = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] < 0; }).map(function (genre) { return genre.title.toLowerCase(); });
+        var parts = [selectedTypes.length === CONTENT_TYPES.length ? 'Все типы' : selectedTypes.join(', ')];
+        if (wanted.length) parts.push(wanted.join(', '));
+        if (excluded.length) parts.push('без: ' + excluded.join(', '));
+        parts.push(filters.rating ? filters.rating + '+' : 'любой рейтинг');
+        return parts.join(' · ');
+    }
+
     function learningFeedback() {
         var feedback = readFeedback();
         var combined = { schema: FEEDBACK_SCHEMA, items: {} };
@@ -517,8 +670,10 @@
 
     function buildRuntimeProfile() {
         var profile = buildProfileFromFeedback(learningFeedback());
+        profile.filters = readFilters();
         profile.signature = simpleHash([
             profile.signature,
+            filterSignature(profile.filters),
             setting('mode', 'balanced'),
             boolSetting('hide_seen', true),
             readMoodStore().active ? readMoodStore().active.updatedAt : 0,
@@ -639,13 +794,112 @@
         }).slice(0, limit);
     }
 
+    function mediaAllowed(filters, type) {
+        filters = normalizeFilters(filters);
+        return type === 'movie'
+            ? filters.types.movie || filters.types.anime || filters.types.cartoon
+            : filters.types.tv || filters.types.anime || filters.types.cartoon;
+    }
+
+    function positiveSignalsForFilters(profile) {
+        var filters = normalizeFilters(profile.filters);
+        var scoped = profile.positive.filter(function (signal) { return filters.types[contentKind(signal.card)]; });
+        return scoped.length ? scoped : profile.positive;
+    }
+
+    function discoveryRequests(filters, page) {
+        filters = normalizeFilters(filters);
+        var requests = [];
+        var wanted = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] > 0; });
+        var excluded = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] < 0; });
+
+        ['movie', 'tv'].forEach(function (media) {
+            if (!mediaAllowed(filters, media)) return;
+            var liveKind = media === 'movie' ? 'movie' : 'tv';
+            var groups = [];
+            if (filters.types[liveKind] && filters.types.anime && filters.types.cartoon) groups.push('all');
+            else {
+                if (filters.types[liveKind]) groups.push('live');
+                if (filters.types.anime && filters.types.cartoon) groups.push('animation');
+                else {
+                    if (filters.types.anime) groups.push('anime');
+                    if (filters.types.cartoon) groups.push('cartoon');
+                }
+            }
+
+            groups.forEach(function (group) {
+                var wantedIds = [];
+                wanted.forEach(function (genre) {
+                    filterGenreIds(genre, media).forEach(function (id) {
+                        if (wantedIds.indexOf(id) < 0) wantedIds.push(id);
+                    });
+                });
+                if (!wantedIds.length) wantedIds.push(0);
+
+                wantedIds.forEach(function (wantedId) {
+                    var genreIdsForRequest = [];
+                    var withoutGenres = [];
+                    if (group === 'live') withoutGenres.push(16);
+                    if (group === 'animation' || group === 'anime' || group === 'cartoon') genreIdsForRequest.push(16);
+                    if (wantedId && genreIdsForRequest.indexOf(wantedId) < 0) genreIdsForRequest.push(wantedId);
+                    excluded.forEach(function (genre) {
+                        filterGenreIds(genre, media).forEach(function (id) {
+                            if (withoutGenres.indexOf(id) < 0) withoutGenres.push(id);
+                        });
+                    });
+
+                    var request = {
+                        mediaType: media,
+                        kind: group,
+                        params: {
+                            page: page || 1,
+                            genres: genreIdsForRequest.join(','),
+                            sort_by: filters.rating ? 'vote_average.desc' : 'popularity.desc',
+                            filter: {
+                                'include_adult': 'false',
+                                'vote_count.gte': media === 'movie' ? 100 : 50
+                            }
+                        }
+                    };
+                    if (!request.params.genres) delete request.params.genres;
+                    if (withoutGenres.length) request.params.filter.without_genres = withoutGenres.join(',');
+                    if (filters.rating) request.params.filter['vote_average.gte'] = filters.rating;
+                    if (group === 'anime') request.params.orig_lang = 'ja';
+                    requests.push(request);
+                });
+            });
+        });
+
+        return requests;
+    }
+
+    function addDiscoveryTasks(tasks, filters, pool, pages, weight) {
+        asArray(pages).forEach(function (page) {
+            discoveryRequests(filters, page).forEach(function (request) {
+                tasks.push(function (done) {
+                    tmdbGet('discover/' + request.mediaType, request.params, function (items) {
+                        pool.add(items, {
+                            mediaType: request.mediaType,
+                            weight: weight || 1.7,
+                            exploration: true,
+                            reason: 'По текущим фильтрам'
+                        });
+                        done();
+                    });
+                });
+            });
+        });
+    }
+
     function recommendationTasks(profile, pool) {
         var tasks = [];
         var mode = setting('mode', 'balanced');
         var seedLimit = mode === 'precise' ? 8 : mode === 'explore' ? 4 : 6;
+        var filters = normalizeFilters(profile.filters);
 
-        profile.positive.slice(0, seedLimit).forEach(function (signal) {
+        positiveSignalsForFilters(profile).slice(0, seedLimit).forEach(function (signal) {
             var type = mediaType(signal.card);
+            if (!mediaAllowed(filters, type)) return;
             var anchorKey = signal.key;
             var endpoint = type + '/' + signal.card.id + '/recommendations';
             tasks.push(function (done) {
@@ -674,6 +928,7 @@
         });
 
         ['movie', 'tv'].forEach(function (type) {
+            if (!mediaAllowed(filters, type)) return;
             var genres = topGenres(profile, type, 2);
             if (genres.length) {
                 tasks.push(function (done) {
@@ -709,6 +964,8 @@
             });
         });
 
+        addDiscoveryTasks(tasks, filters, pool, [1, 2], 1.9);
+
         return tasks;
     }
 
@@ -721,6 +978,7 @@
             return entry;
         }).filter(function (entry) {
             if (!entry.card.poster_path && !entry.card.backdrop_path) return false;
+            if (!matchesFilters(entry.card, profile.filters)) return false;
             if (hideSeen && profile.seen[entry.key]) return false;
             return true;
         }).sort(function (left, right) {
@@ -746,7 +1004,7 @@
             });
         }
 
-        profile.positive.slice(0, 2).forEach(function (signal) {
+        positiveSignalsForFilters(profile).slice(0, 2).forEach(function (signal) {
             var keys = pool.anchors[signal.key] || [];
             var anchorEntries = keys.map(function (key) { return pool.items[key]; }).filter(function (entry) {
                 return entry && (!hideSeen || !profile.seen[entry.key]);
@@ -773,12 +1031,10 @@
             });
         }
 
-        var movies = selected.filter(function (entry) { return mediaType(entry.card) === 'movie'; });
-        var shows = selected.filter(function (entry) { return mediaType(entry.card) === 'tv'; });
-        if (movies.length >= 5 && shows.length >= 5) {
-            lines.push({ title: 'Фильмы для вас', results: cards(movies), nomore: true });
-            lines.push({ title: 'Сериалы для вас', results: cards(shows), nomore: true });
-        }
+        CONTENT_TYPES.forEach(function (type) {
+            var byKind = selected.filter(function (entry) { return contentKind(entry.card) === type.id; });
+            if (byKind.length >= 5) lines.push({ title: type.title + ' для вас', results: cards(byKind), nomore: true });
+        });
 
         return {
             lines: lines,
@@ -868,13 +1124,14 @@
     function prepareMoodCandidates(payload, profile, callback) {
         var cards = cardsFromLines(payload && payload.lines);
         var used = {};
+        var filters = normalizeFilters(profile.filters);
         cards.forEach(function (card) { used[cardKey(card)] = true; });
 
         function add(items, type) {
             asArray(items).forEach(function (card) {
                 var safe = compactCard(card, type);
                 var key = cardKey(safe);
-                if (!key || used[key] || safe.adult || (!safe.poster_path && !safe.backdrop_path) || profile.seen[key]) return;
+                if (!key || used[key] || safe.adult || (!safe.poster_path && !safe.backdrop_path) || profile.seen[key] || !matchesFilters(safe, filters)) return;
                 safe.smart_recs_score = 45;
                 used[key] = true;
                 cards.push(safe);
@@ -883,6 +1140,7 @@
 
         var tasks = [];
         ['movie', 'tv'].forEach(function (type) {
+            if (!mediaAllowed(filters, type)) return;
             [2, 3].forEach(function (page) {
                 tasks.push(function (done) {
                     tmdbGet('trending/' + type + '/week', { page: page }, function (items) {
@@ -907,6 +1165,17 @@
             }
         });
 
+        [2, 3].forEach(function (page) {
+            discoveryRequests(filters, page).forEach(function (request) {
+                tasks.push(function (done) {
+                    tmdbGet('discover/' + request.mediaType, request.params, function (items) {
+                        add(items, request.mediaType);
+                        done();
+                    });
+                });
+            });
+        });
+
         runQueue(tasks, 3, function () { callback(cards); });
     }
 
@@ -920,6 +1189,13 @@
             '.smart-recs-mood-entry__icon{position:absolute;right:1.1em;top:1em;width:4.2em;height:4.2em;opacity:.82}',
             '.smart-recs-mood-entry__text{position:relative;z-index:1}.smart-recs-mood-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-mood-entry__subtitle{font-size:.86em;opacity:.72;max-width:18em}',
             '.smart-recs-mood-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
+            '.smart-recs-filter-entry{width:25em;height:11.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#dfe5ee,#aebdce);color:#17202a;display:flex;align-items:flex-end;position:relative;padding:1.5em;box-sizing:border-box}',
+            '.smart-recs-filter-entry:after{content:"";position:absolute;right:1.4em;top:1.2em;width:4.3em;height:4.3em;border:.22em solid currentColor;border-radius:50%;opacity:.16}',
+            '.smart-recs-filter-entry__text{position:relative;z-index:1}.smart-recs-filter-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-filter-entry__subtitle{font-size:.82em;line-height:1.35;opacity:.72;max-width:21em}',
+            '.smart-recs-filter-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
+            '.smart-recs-filter-editor{padding:.3em .1em 1em}.smart-recs-filter-editor__section{margin-bottom:1.4em}.smart-recs-filter-editor__heading{font-size:1em;font-weight:650;margin-bottom:.65em}.smart-recs-filter-editor__chips{display:flex;flex-wrap:wrap;gap:.55em}',
+            '.smart-recs-filter-chip{padding:.62em .9em;border-radius:.65em;background:rgba(255,255,255,.09);border:.12em solid rgba(255,255,255,.12);min-width:6.5em;text-align:center;box-sizing:border-box}.smart-recs-filter-chip.is-selected,.smart-recs-filter-chip.is-wanted{background:#dce8df;color:#172019;border-color:#dce8df}.smart-recs-filter-chip.is-excluded{background:#653e43;color:#fff0f0;border-color:#8b545b}.smart-recs-filter-chip.focus{box-shadow:0 0 0 .18em #fff;transform:scale(1.035)}',
+            '.smart-recs-filter-editor__legend{font-size:.82em;opacity:.65;line-height:1.45}',
             '.smart-recs-mood{position:fixed;inset:0;z-index:999;background:#0b0e0c;color:#f4f6f4;overflow:hidden;font-family:inherit}',
             '.smart-recs-mood__media{position:absolute;inset:0;background:#111 center/cover no-repeat}.smart-recs-mood__media iframe{width:100%;height:100%;border:0;display:block;opacity:0;transition:opacity .35s ease}.smart-recs-mood__media iframe.ready{opacity:1}',
             '.smart-recs-mood__shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(6,8,7,.28) 0%,transparent 34%,rgba(6,8,7,.9) 86%,#080a09 100%)}',
@@ -939,8 +1215,26 @@
         if (mood.draft && asArray(mood.draft.records).length < MOOD_MINIMUM) {
             return 'Продолжить: ' + mood.draft.records.length + ' из ' + MOOD_MINIMUM;
         }
-        if (mood.active) return 'Обновить настроение · действует 6 часов';
+        if (mood.active) return 'Обновить выбор · действует 6 часов';
         return '10–60 коротких трейлеров';
+    }
+
+    function FilterEntryCard(data) {
+        var html;
+        var card = {};
+        card.create = function () {
+            html = $('<div class="smart-recs-filter-entry selector"><div class="smart-recs-filter-entry__text"><div class="smart-recs-filter-entry__title">Изменить подборку</div><div class="smart-recs-filter-entry__subtitle"></div></div></div>');
+            html.find('.smart-recs-filter-entry__subtitle').text(filterSummary(readFilters()));
+            html.on('hover:focus hover:hover hover:touch', function () {
+                if (card.onFocus) card.onFocus(html[0], data);
+            });
+            html.on('hover:enter', function () {
+                if (card.onEnter) card.onEnter(html[0], data);
+            });
+        };
+        card.render = function (js) { return js ? html[0] : html; };
+        card.destroy = function () { if (html) html.remove(); };
+        return card;
     }
 
     function MoodEntryCard(data) {
@@ -949,7 +1243,7 @@
         card.create = function () {
             html = $('<div class="smart-recs-mood-entry selector">' +
                 '<svg class="smart-recs-mood-entry__icon" viewBox="0 0 64 64"><path fill="currentColor" d="M32 6a26 26 0 1 0 0 52 26 26 0 0 0 0-52Zm-9 15 22 11-22 11V21Z"/></svg>' +
-                '<div class="smart-recs-mood-entry__text"><div class="smart-recs-mood-entry__title">Настроить настроение</div><div class="smart-recs-mood-entry__subtitle"></div></div></div>');
+                '<div class="smart-recs-mood-entry__text"><div class="smart-recs-mood-entry__title">Лента трейлеров</div><div class="smart-recs-mood-entry__subtitle"></div></div></div>');
             html.find('.smart-recs-mood-entry__subtitle').text(moodStatusText());
             html.on('hover:focus hover:hover hover:touch', function () {
                 if (card.onFocus) card.onFocus(html[0], data);
@@ -1004,6 +1298,8 @@
         var shownAt = 0;
         var playbackTimer = null;
         var playbackRetries = 0;
+        var playerSequence = 0;
+        var ignorePlayback = true;
         var serial = 0;
         var changing = false;
         var destroyed = false;
@@ -1047,6 +1343,18 @@
             frameWindow = null;
             bridgeId = '';
             currentVideo = null;
+            ignorePlayback = true;
+        }
+
+        function prepareFrameForNext() {
+            clearTimeout(playbackTimer);
+            playbackRetries = 0;
+            ignorePlayback = true;
+            currentVideo = null;
+            if (frame) {
+                post('pause');
+                frame.classList.remove('ready');
+            }
         }
 
         function loadVideo(card, callback) {
@@ -1060,16 +1368,23 @@
         }
 
         function createFrame(video) {
-            var root = Lampa.Manifest && Lampa.Manifest.github_lampa || '';
-            bridgeId = 'smart_recs_' + Math.random().toString(36).slice(2);
             clipStart = video.type === 'Teaser' ? 0 : 8;
-            frame = document.createElement('iframe');
-            frame.src = root.replace(/\/?$/, '/') + 'youtube.html?bridgeId=' + encodeURIComponent(bridgeId) + '&videoId=' + encodeURIComponent(video.key) + '&autoplay=1&controls=0&mute=0&start=' + clipStart;
-            frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
-            frame.setAttribute('allowfullscreen', 'true');
-            frame.onload = function () { frameWindow = frame.contentWindow; };
-            media.empty().append(frame);
-            frameWindow = frame.contentWindow;
+            playerSequence += 1;
+            ignorePlayback = false;
+            playbackRetries = 0;
+            if (!frame) {
+                bridgeId = 'smart_recs_' + Math.random().toString(36).slice(2);
+                frame = document.createElement('iframe');
+                frame.src = TRAILER_PLAYER_URL + '?v=' + encodeURIComponent(VERSION) + '&bridgeId=' + encodeURIComponent(bridgeId) + '&videoId=' + encodeURIComponent(video.key) + '&autoplay=1&start=' + clipStart + '&sequence=' + playerSequence;
+                frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+                frame.setAttribute('allowfullscreen', 'true');
+                frame.onload = function () { if (frame) frameWindow = frame.contentWindow; };
+                media.empty().append(frame);
+                frameWindow = frame.contentWindow;
+            } else {
+                post('load', { videoId: video.key, start: clipStart, autoplay: true, sequence: playerSequence });
+                playbackTimer = setTimeout(retryAutoplay, 350);
+            }
         }
 
         function previewNext() {
@@ -1079,7 +1394,11 @@
 
         function retryAutoplay() {
             clearTimeout(playbackTimer);
-            if (!frame || frame.classList.contains('ready') || playbackRetries >= 5) return;
+            if (!frame || frame.classList.contains('ready')) return;
+            if (playbackRetries >= 10) {
+                html.find('.smart-recs-mood__status').removeClass('hide').text('Не удалось запустить трейлер · нажмите Дальше');
+                return;
+            }
             playbackRetries += 1;
             post('play');
             playbackTimer = setTimeout(retryAutoplay, 1200);
@@ -1088,7 +1407,7 @@
         function showNext() {
             if (destroyed) return;
             changing = false;
-            destroyFrame();
+            prepareFrameForNext();
             var ranked = rankMoodCards(cards, session.records, shown);
             if (!ranked.length) return self.finish(true);
             current = ranked[0];
@@ -1102,7 +1421,7 @@
             serial += 1;
             var requestSerial = serial;
             var backdrop = imageForCard(current);
-            media.empty().css('background-image', backdrop ? 'url("' + backdrop.replace(/"/g, '%22') + '")' : 'none');
+            media.css('background-image', backdrop ? 'url("' + backdrop.replace(/"/g, '%22') + '")' : 'none');
             html.find('.smart-recs-mood__title').text(titleOf(current));
             html.find('.smart-recs-mood__overview').text(current.overview || 'Оцените по трейлеру, постеру и описанию.');
             html.find('.smart-recs-mood__eyebrow').text((mediaType(current) === 'tv' ? 'Сериал' : 'Фильм') + (yearOf(current) ? ' · ' + yearOf(current) : ''));
@@ -1179,6 +1498,8 @@
             if (!event.data || event.data.bridgeId !== bridgeId || destroyed) return;
             var type = event.data.type;
             var data = event.data.data || {};
+            if (typeof data.sequence === 'number' && data.sequence !== playerSequence) return;
+            if (ignorePlayback && type !== 'bridgeReady') return;
             if (type === 'bridgeReady' || type === 'ready') {
                 frameWindow = frame && frame.contentWindow;
                 post('init', { volume: 100 });
@@ -1186,16 +1507,20 @@
                 if (type === 'ready') retryAutoplay();
             } else if (type === 'stateChange' && data.state === 1) {
                 clearTimeout(playbackTimer);
+                playbackRetries = 0;
                 if (frame) frame.classList.add('ready');
                 html.find('.smart-recs-mood__status').addClass('hide');
             } else if (type === 'time') {
                 watchedSeconds = Math.max(watchedSeconds, asNumber(data.currentTime, clipStart) - clipStart);
                 updateProgress();
                 if (watchedSeconds >= PREVIEW_SECONDS) act('complete');
-            } else if (type === 'stateChange' && data.state === 0) {
+            } else if (type === 'stateChange' && data.state === 0 && frame && frame.classList.contains('ready')) {
                 act('complete');
             } else if (type === 'error') {
-                destroyFrame();
+                clearTimeout(playbackTimer);
+                if (frame) frame.classList.remove('ready');
+                ignorePlayback = true;
+                currentVideo = null;
                 html.find('.smart-recs-mood__status').removeClass('hide').text('Трейлер недоступен · оцените карточку');
             }
             if (Lampa.Screensaver && Lampa.Screensaver.resetTimer) Lampa.Screensaver.resetTimer();
@@ -1265,6 +1590,108 @@
         });
     }
 
+    function buildFilterEditor(draft) {
+        var html = $('<div class="smart-recs-filter-editor"></div>');
+
+        function section(title, items, kind) {
+            var block = $('<div class="smart-recs-filter-editor__section"><div class="smart-recs-filter-editor__heading"></div><div class="smart-recs-filter-editor__chips"></div></div>');
+            block.find('.smart-recs-filter-editor__heading').text(title);
+            items.forEach(function (item) {
+                var chip = $('<div class="smart-recs-filter-chip selector"></div>');
+                chip.attr('data-filter-kind', kind).attr('data-filter-id', item.id).attr('data-filter-title', item.title).text(item.title);
+                block.find('.smart-recs-filter-editor__chips').append(chip);
+            });
+            html.append(block);
+        }
+
+        section('Что показывать', CONTENT_TYPES, 'type');
+        section('Жанры · OK меняет: хочу → исключить → неважно', FILTER_GENRES, 'genre');
+        section('Рейтинг не ниже', [
+            { id: '0', title: 'Любой' },
+            { id: '5', title: '5+' },
+            { id: '6', title: '6+' },
+            { id: '7', title: '7+' },
+            { id: '8', title: '8+' }
+        ], 'rating');
+        html.append('<div class="smart-recs-filter-editor__legend">Фильтр определяет, что показать сейчас, и не меняет ваш постоянный вкус.</div>');
+        syncFilterEditor(html, draft);
+        return html;
+    }
+
+    function syncFilterEditor(html, draft) {
+        html.find('.smart-recs-filter-chip').each(function () {
+            var chip = $(this);
+            var kind = chip.attr('data-filter-kind');
+            var id = chip.attr('data-filter-id');
+            var title = chip.attr('data-filter-title');
+            var state = 0;
+            if (kind === 'type') state = draft.types[id] ? 1 : 0;
+            else if (kind === 'genre') state = asNumber(draft.genres[id], 0);
+            else if (kind === 'rating') state = asNumber(id, 0) === asNumber(draft.rating, 0) ? 1 : 0;
+            chip.toggleClass('is-selected', kind !== 'genre' && state > 0);
+            chip.toggleClass('is-wanted', kind === 'genre' && state > 0);
+            chip.toggleClass('is-excluded', kind === 'genre' && state < 0);
+            chip.text((state > 0 ? '✓ ' : state < 0 ? '× ' : '') + title);
+        });
+    }
+
+    function openFilterEditor(onApply) {
+        if (runtime.filterPromptOpen) return;
+        runtime.filterPromptOpen = true;
+        var previousController = Lampa.Controller.enabled().name;
+        var draft = jsonClone(readFilters());
+        var html = buildFilterEditor(draft);
+
+        function close() {
+            runtime.filterPromptOpen = false;
+            Lampa.Modal.close();
+            Lampa.Controller.toggle(previousController);
+        }
+
+        Lampa.Modal.open({
+            title: 'Что показать сейчас',
+            html: html,
+            size: 'large',
+            align: 'center',
+            buttons: [
+                {
+                    name: 'Сбросить фильтры',
+                    onSelect: function () {
+                        draft = defaultFilters(true);
+                        syncFilterEditor(html, draft);
+                    }
+                },
+                {
+                    name: 'Показать',
+                    onSelect: function () {
+                        var hasType = CONTENT_TYPES.some(function (type) { return draft.types[type.id]; });
+                        if (!hasType) return notify('Выберите хотя бы один тип контента', true);
+                        var changed = saveFilters(draft);
+                        close();
+                        if (onApply) onApply(changed);
+                    }
+                }
+            ],
+            onSelect: function (chip) {
+                var kind = chip.attr('data-filter-kind');
+                var id = chip.attr('data-filter-id');
+                if (kind === 'type') draft.types[id] = !draft.types[id];
+                else if (kind === 'genre') {
+                    var state = asNumber(draft.genres[id], 0);
+                    draft.genres[id] = state === 0 ? 1 : state > 0 ? -1 : 0;
+                } else if (kind === 'rating') draft.rating = asNumber(id, 0);
+                syncFilterEditor(html, draft);
+            },
+            onBack: close
+        });
+    }
+
+    function editCurrentFilters() {
+        openFilterEditor(function (changed) {
+            if (changed) Lampa.Activity.replace({ force: true });
+        });
+    }
+
     function openTasteMenu(target, card) {
         var enabled = Lampa.Controller.enabled().name;
         Lampa.Select.show({
@@ -1298,21 +1725,33 @@
             self.activity.loader(true);
             getRecommendations(object.force === true, function (payload) {
                 if (!alive) return;
-                if (!payload.lines.length) self.empty();
-                else {
-                    var lines = jsonClone(payload.lines);
-                    lines.forEach(function (line) {
-                        line.card_events = { onMenu: openTasteMenu };
-                    });
-                    lines.unshift({
-                        title: 'Текущее настроение',
-                        results: [{ id: 'mood-calibration', media_type: 'movie' }],
-                        nomore: true,
-                        line_type: 'smart-recs-mood',
-                        cardClass: MoodEntryCard,
-                        card_events: { onEnter: startMoodCalibration }
-                    });
-                    self.build(lines);
+                var lines = jsonClone(payload.lines);
+                lines.forEach(function (line) {
+                    line.card_events = { onMenu: openTasteMenu };
+                });
+                lines.unshift({
+                    title: 'Быстрый выбор',
+                    results: [{ id: 'mood-calibration', media_type: 'movie' }],
+                    nomore: true,
+                    line_type: 'smart-recs-mood',
+                    cardClass: MoodEntryCard,
+                    card_events: { onEnter: startMoodCalibration }
+                });
+                lines.unshift({
+                    title: 'Сейчас показываем',
+                    results: [{ id: 'filter-selection', media_type: 'movie' }],
+                    nomore: true,
+                    line_type: 'smart-recs-filter',
+                    cardClass: FilterEntryCard,
+                    card_events: { onEnter: editCurrentFilters }
+                });
+                self.build(lines);
+                if (!readFilters().configured) {
+                    setTimeout(function () {
+                        if (alive) openFilterEditor(function (changed) {
+                            if (changed) Lampa.Activity.replace({ force: true });
+                        });
+                    }, 150);
                 }
             });
             return this.render();

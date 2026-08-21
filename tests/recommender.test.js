@@ -48,6 +48,7 @@ test('detects media type and strips unknown fields from stored cards', () => {
   });
 
   assert.equal(core.mediaType(compact), 'tv');
+  assert.equal(compact.title, 'A show');
   assert.deepEqual(Array.from(compact.genre_ids), [18]);
   assert.equal(compact.private_token, undefined);
 });

@@ -9,6 +9,7 @@ const path = require('node:path');
 const chrome = process.env.CHROME_PATH;
 const targetUrl = process.env.LAMPA_URL || 'http://127.0.0.1:3000';
 const port = Number(process.env.CHROME_DEBUG_PORT || 9227);
+const pluginSource = fs.readFileSync(path.join(__dirname, '..', 'smart-recs.js'), 'utf8');
 
 if (!chrome || !fs.existsSync(chrome)) {
   console.error('Set CHROME_PATH to an installed Chrome/Chromium executable.');
@@ -96,7 +97,19 @@ async function inspect() {
   await command('Runtime.enable');
   await command('Page.enable');
   await command('Page.addScriptToEvaluateOnNewDocument', {
-    source: "localStorage.setItem('language', 'ru')",
+    source: `
+      localStorage.setItem('language', 'ru');
+      (() => {
+        const installSmartRecs = () => {
+          if (window.Lampa?.Listener) {
+            ${pluginSource}
+          } else {
+            setTimeout(installSmartRecs, 25);
+          }
+        };
+        installSmartRecs();
+      })();
+    `,
   });
   await evaluate("localStorage.setItem('language', 'ru')");
   await command('Page.reload', { ignoreCache: true });
@@ -107,7 +120,7 @@ async function inspect() {
     state = await evaluate(`({
       appready: Boolean(window.appready),
       language: localStorage.getItem('language'),
-      plugin: window.LampaSmartRecs && window.LampaSmartRecs.version,
+      plugin: document.getElementById('lampa-smart-recs-style')?.getAttribute('data-smart-recs-version') || window.LampaSmartRecs?.version,
       menu: document.querySelectorAll('.lampa-smart-recs-menu').length,
       appChildren: document.querySelector('#app')?.children.length || 0,
       cacheLines: (() => {
@@ -143,10 +156,13 @@ async function inspect() {
       sameRow: (() => {
         const filter = document.querySelector('.smart-recs-filter-entry');
         const mood = document.querySelector('.smart-recs-mood-entry');
-        return Boolean(filter && mood && filter.closest('.items-line') === mood.closest('.items-line'));
-      })()
+        return Boolean(filter && mood && filter.closest('.smart-recs-actions-row') === mood.closest('.smart-recs-actions-row'));
+      })(),
+      gridCards: document.querySelectorAll('.smart-recs-grid .card').length,
+      missingTitles: Array.from(document.querySelectorAll('.smart-recs-grid .card')).filter((item) => !item.querySelector('.card__title')?.textContent.trim()).length,
+      gridRows: new Set(Array.from(document.querySelectorAll('.smart-recs-grid .card')).map((item) => Math.round(item.getBoundingClientRect().top))).size
     })`);
-    if (recommendationScreen.entry && recommendationScreen.filterEntry && recommendationScreen.sameRow) break;
+    if (recommendationScreen.entry && recommendationScreen.filterEntry && recommendationScreen.sameRow && recommendationScreen.gridRows > 1 && !recommendationScreen.missingTitles) break;
     await delay(250);
   }
 
@@ -415,7 +431,8 @@ async function inspect() {
     const report = await inspect();
     console.log(JSON.stringify(report, null, 2));
     if (process.env.TRAILER_ONLY === '1') {
-      if (report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
+      if (report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
+        report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
         report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
         report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||
         !report.filterResult?.configured || report.filterResult?.cards < 1 || report.filterResult?.invalid !== 0 ||
@@ -424,8 +441,8 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.3.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
-      report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow ||
+    if (report.state?.plugin !== '0.4.0' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+      report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
       report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||

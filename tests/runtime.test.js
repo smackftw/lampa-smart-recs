@@ -14,9 +14,33 @@ test('boots against the current public Lampa plugin surface', async () => {
   const pluginMenus = [];
   const timers = [];
   const tmdbRequests = [];
-  let builtLines = [];
-  let feedLine;
-  let feedAttachCount = 0;
+  const renderedCards = [];
+
+  function element(className = '') {
+    const classes = new Set(className.split(/\s+/).filter(Boolean));
+    return {
+      children: [],
+      className,
+      classList: {
+        add(name) { classes.add(name); },
+        remove(name) { classes.delete(name); },
+        contains(name) { return classes.has(name); },
+        toggle(name, state) { if (state === false) classes.delete(name); else classes.add(name); },
+      },
+      appendChild(child) { this.children.push(child); return child; },
+      addEventListener() {},
+      setAttribute(name, value) { this[name] = value; },
+      getAttribute(name) { return this[name]; },
+      remove() {},
+    };
+  }
+
+  const document = {
+    currentScript: null,
+    head: element('head'),
+    createElement() { return element(); },
+    getElementById() { return null; },
+  };
 
   function listener() {
     return { follow() {}, remove() {} };
@@ -25,13 +49,20 @@ test('boots against the current public Lampa plugin surface', async () => {
   function jquery(selector) {
     const isMenu = typeof selector === 'string' && selector.includes('.menu__list');
     const isExistingButton = typeof selector === 'string' && selector.includes('lampa-smart-recs-menu');
-    return {
+    const classMatch = typeof selector === 'string' ? selector.match(/class="([^"]+)"/) : null;
+    const node = typeof selector === 'object' ? selector : element(classMatch ? classMatch[1] : '');
+    const wrapper = {
+      0: node,
       length: isMenu ? 1 : isExistingButton ? 0 : 1,
       on() { return this; },
       eq() { return this; },
       prepend() { return this; },
       detach() { return this; },
+      find() { return this; },
+      text() { return this; },
+      remove() { return this; },
     };
+    return wrapper;
   }
 
   const manifest = {};
@@ -82,31 +113,48 @@ test('boots against the current public Lampa plugin surface', async () => {
     ContentRows: { add(row) { rows.push(row); } },
     Manifest: manifest,
     Listener: listener(),
-    Activity: { push() {} },
+    Activity: { push() {}, backward() {} },
+    Background: { change() {} },
+    Utils: { cardImgBackground() { return ''; } },
+    Layer: { visible() {} },
     Noty: { show() {} },
     Controller: {
       enabled() { return { name: 'settings' }; },
       toggle() {},
+      own() { return true; },
+      add() {},
+      collectionAppend() {},
+      collectionSet() {},
+      collectionFocus() {},
     },
     Select: { show(definition) { lampa.lastSelect = definition; } },
     Input: { edit() {} },
-    InteractionMain: function InteractionMain() {
-      this.activity = { loader() {} };
-      this.build = function build(lines) {
-        builtLines = lines;
-        lines.forEach((data) => {
-          const line = { attach() { feedAttachCount += 1; } };
-          if (this.onAppend) this.onAppend(line, data);
-          if (data.smart_recs_feed) feedLine = line;
-        });
-      };
-      this.render = function render() { return {}; };
+    Scroll: function Scroll() {
+      const node = element('scroll');
+      this.minus = function minus() {};
+      this.update = function update() {};
+      this.append = function append(child) { node.appendChild(child); };
+      this.render = function render(js) { return js ? node : jquery(node); };
+      this.destroy = function destroy() {};
+    },
+    Card: function Card(data) {
+      const node = element('card selector');
+      this.data = data;
+      this.create = function create() { renderedCards.push(this); };
+      this.render = function render(js) { return js ? node : jquery(node); };
       this.destroy = function destroy() {};
     },
   };
 
+  const navigator = {
+    setCollection() {},
+    focused() {},
+    canmove() { return true; },
+    move() {},
+  };
   const context = {
-    window: { appready: true },
+    window: { appready: true, Navigator: navigator, document },
+    document,
     Lampa: lampa,
     $: jquery,
     XMLHttpRequest: function XMLHttpRequest() {},
@@ -126,7 +174,7 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.3.3');
+  assert.equal(context.window.LampaSmartRecs.version, '0.4.0');
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);
@@ -135,13 +183,13 @@ test('boots against the current public Lampa plugin surface', async () => {
   assert.equal(storage.get('lampa_smart_recs_cache').payload.lines[0].title, 'Для вас');
 
   const recommendationComponent = components.get('lampa_smart_recs')({ force: false });
+  recommendationComponent.activity = { loader() {}, toggle() {}, canRefresh() { return false; } };
   recommendationComponent.create();
   timers.splice(0).forEach((fn) => fn());
-  const feed = builtLines.find((line) => line.smart_recs_feed);
-  const initialFeedLength = feed.results.length;
-  feedLine.onFocus(feed.results[initialFeedLength - 1]);
-  assert.ok(feed.results.length > initialFeedLength);
-  assert.ok(feedAttachCount > 0);
+  const initialFeedLength = renderedCards.length;
+  const lastInitialCard = renderedCards[initialFeedLength - 1];
+  lastInitialCard.onFocus(lastInitialCard.render(true), lastInitialCard.data);
+  assert.ok(renderedCards.length > initialFeedLength);
   assert.ok(tmdbRequests.some((request) => request.page >= 3));
 
   const moodReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_mood');

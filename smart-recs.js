@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.3.3
+ * Lampa Smart Recs v0.4.0
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.3.3';
+    var VERSION = '0.4.0';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -154,8 +154,8 @@
             source: 'tmdb'
         };
 
+        result.title = result.title || result.name || result.original_title || result.original_name || 'Без названия';
         if (result.media_type === 'tv' && !result.name) result.name = result.title;
-        if (result.media_type === 'movie' && !result.title) result.title = result.name;
         if (card.number_of_seasons) result.number_of_seasons = asNumber(card.number_of_seasons, 0);
         return result;
     }
@@ -1199,6 +1199,7 @@
         if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
         var style = document.createElement('style');
         style.id = STYLE_ID;
+        style.setAttribute('data-smart-recs-version', VERSION);
         style.textContent = [
             '.smart-recs-mood-entry{width:20em;height:8.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#e8eee9,#b9c8bd);color:#152019;display:flex;align-items:flex-end;position:relative;padding:1.25em;box-sizing:border-box}',
             '.smart-recs-mood-entry:after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 82% 16%,rgba(255,255,255,.75),transparent 34%)}',
@@ -1209,6 +1210,9 @@
             '.smart-recs-filter-entry:after{content:"";position:absolute;right:1.4em;top:1.2em;width:4.3em;height:4.3em;border:.22em solid currentColor;border-radius:50%;opacity:.16}',
             '.smart-recs-filter-entry__text{position:relative;z-index:1}.smart-recs-filter-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-filter-entry__subtitle{font-size:.82em;line-height:1.35;opacity:.72;max-width:21em}',
             '.smart-recs-filter-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
+            '.smart-recs-screen{height:100%}.smart-recs-page{padding:1.1em 0 3em}.smart-recs-page__heading{font-size:1.45em;font-weight:600;margin:0 1em .8em}',
+            '.smart-recs-actions-row{display:flex;flex-wrap:wrap;gap:1em;padding:0 1.4em 2.2em}.smart-recs-grid{align-items:flex-start}.smart-recs-grid .card{padding-bottom:1.8em}',
+            '.smart-recs-grid .card__title{display:-webkit-box!important;-webkit-box-orient:vertical;-webkit-line-clamp:3!important;line-clamp:3!important;height:auto!important;min-height:2.4em;max-height:3.6em;overflow:hidden;overflow-wrap:anywhere;word-break:break-word}',
             '.smart-recs-filter-editor{padding:.3em .1em 1em}.smart-recs-filter-editor__section{margin-bottom:1.4em}.smart-recs-filter-editor__heading{font-size:1em;font-weight:650;margin-bottom:.65em}.smart-recs-filter-editor__chips{display:flex;flex-wrap:wrap;gap:.55em}',
             '.smart-recs-filter-chip{padding:.62em .9em;border-radius:.65em;background:rgba(255,255,255,.09);border:.12em solid rgba(255,255,255,.12);min-width:6.5em;text-align:center;box-sizing:border-box}.smart-recs-filter-chip.is-selected,.smart-recs-filter-chip.is-wanted{background:#dce8df;color:#172019;border-color:#dce8df}.smart-recs-filter-chip.is-excluded{background:#653e43;color:#fff0f0;border-color:#8b545b}.smart-recs-filter-chip.focus{box-shadow:0 0 0 .18em #fff;transform:scale(1.035)}',
             '.smart-recs-filter-editor__legend{font-size:.82em;opacity:.65;line-height:1.45}',
@@ -1221,7 +1225,7 @@
             '.smart-recs-mood__info{max-width:57%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__eyebrow{font-size:.82em;letter-spacing:.09em;text-transform:uppercase;opacity:.66;margin-bottom:.6em}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650}.smart-recs-mood__overview{font-size:.9em;line-height:1.45;opacity:.76;margin-top:.75em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
             '.smart-recs-mood__actions{display:flex;gap:.8em;flex-shrink:0}.smart-recs-mood__button{min-width:8.8em;padding:.88em 1.35em;border-radius:.72em;background:rgba(238,243,239,.15);border:.12em solid rgba(255,255,255,.26);font-size:1.05em;text-align:center;box-sizing:border-box}.smart-recs-mood__button.focus{background:#eef3ef;color:#101612;border-color:#eef3ef;transform:scale(1.045)}',
             '.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.58);font-size:.9em}.smart-recs-mood__status.hide{display:none}',
-            '@media(max-width:700px){.smart-recs-mood__top{left:1.4em;right:1.4em;top:1.3em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__overview{display:none}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
+            '@media(max-width:700px){.smart-recs-actions-row{display:grid;grid-template-columns:1fr 1fr}.smart-recs-filter-entry,.smart-recs-mood-entry{width:100%}.smart-recs-mood__top{left:1.4em;right:1.4em;top:1.3em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__overview{display:none}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
         ].join('');
         document.head.appendChild(style);
     }
@@ -1741,19 +1745,107 @@
     }
 
     function RecommendationsComponent(object) {
-        var component = new Lampa.InteractionMain(object);
+        object = object || {};
+        var component = {};
+        var scroll = new Lampa.Scroll({ mask: true, over: true, step: 250, end_ratio: 2 });
+        var html = document.createElement('div');
+        var page = document.createElement('div');
+        var actions = document.createElement('div');
+        var grid = document.createElement('div');
+        var items = [];
+        var recommendationData = [];
+        var active = 0;
+        var last = null;
         var alive = true;
-        var originalDestroy = component.destroy;
-        var feedLine = null;
-        var feedData = null;
         var feedKnown = {};
         var nextBatch = 2;
         var loadingMore = false;
         var emptyBatches = 0;
         var feedExhausted = false;
+        var built = false;
+
+        html.className = 'smart-recs-screen';
+        page.className = 'smart-recs-page';
+        actions.className = 'smart-recs-actions-row';
+        grid.className = 'category-full smart-recs-grid';
+
+        function heading(title) {
+            var element = document.createElement('div');
+            element.className = 'smart-recs-page__heading';
+            element.textContent = title;
+            return element;
+        }
+
+        page.appendChild(heading('Настройка рекомендаций'));
+        page.appendChild(actions);
+        page.appendChild(heading('Для вас'));
+        page.appendChild(grid);
+
+        function navigator() {
+            return window.Navigator || null;
+        }
+
+        function focusItem(item, target, data, recommendation) {
+            last = target;
+            active = items.indexOf(item);
+            scroll.update(item.render(true));
+            if (recommendation && Lampa.Background && Lampa.Background.change && Lampa.Utils && Lampa.Utils.cardImgBackground) {
+                Lampa.Background.change(Lampa.Utils.cardImgBackground(data));
+            }
+            if (recommendation) maybeLoadMore(data);
+        }
+
+        function appendAction(data) {
+            var item = RecommendationActionCard(data);
+            item.create();
+            item.onFocus = function (target, card) { focusItem(item, target, card, false); };
+            item.onEnter = openRecommendationAction;
+            actions.appendChild(item.render(true));
+            items.push(item);
+        }
+
+        function appendRecommendation(card, append) {
+            var item = new Lampa.Card(card, { object: object, card_category: true });
+            item.create();
+            item.onFocus = function (target, data) { focusItem(item, target, data, true); };
+            item.onTouch = function (target, data) { focusItem(item, target, data, true); };
+            item.onHover = function (target, data) { focusItem(item, target, data, true); };
+            item.onEnter = function (target, data) {
+                last = target;
+                Lampa.Activity.push({
+                    url: '',
+                    component: 'full',
+                    id: data.id,
+                    method: mediaType(data),
+                    card: data,
+                    source: 'tmdb'
+                });
+            };
+            item.onMenu = openTasteMenu;
+            grid.appendChild(item.render(true));
+            items.push(item);
+            recommendationData.push(card);
+            if (append && Lampa.Controller.own && Lampa.Controller.own(component)) {
+                Lampa.Controller.collectionAppend(item.render(true));
+            }
+        }
+
+        function limitVisible() {
+            if (!items.length) return;
+            var nearby = items.slice(Math.max(0, active - 12), active + 13);
+            items.forEach(function (item) {
+                item.render(true).classList.toggle('layer--render', nearby.indexOf(item) >= 0);
+            });
+            var navigation = navigator();
+            if (navigation && navigation.setCollection) {
+                navigation.setCollection(items.slice(Math.max(0, active - 36), active + 37).map(function (item) { return item.render(true); }));
+                if (navigation.focused) navigation.focused(last);
+            }
+            if (Lampa.Layer && Lampa.Layer.visible) Lampa.Layer.visible(scroll.render(true));
+        }
 
         function requestNextBatch() {
-            if (!alive || loadingMore || feedExhausted || !feedData || !feedLine) return;
+            if (!alive || loadingMore || feedExhausted || !built) return;
             loadingMore = true;
             var batch = nextBatch++;
             var profile = buildRuntimeProfile();
@@ -1769,53 +1861,42 @@
                     return;
                 }
                 emptyBatches = 0;
-                Array.prototype.push.apply(feedData.results, incoming);
-                feedLine.attach();
+                incoming.forEach(function (card) { appendRecommendation(card, true); });
+                limitVisible();
             });
         }
 
         function maybeLoadMore(card) {
-            if (!feedData || !feedData.results) return;
-            var index = feedData.results.indexOf(card);
+            var index = recommendationData.indexOf(card);
             if (index < 0) {
                 var key = cardKey(card);
-                index = feedData.results.map(cardKey).indexOf(key);
+                index = recommendationData.map(cardKey).indexOf(key);
             }
-            if (index >= feedData.results.length - LOAD_MORE_THRESHOLD) requestNextBatch();
+            if (index >= recommendationData.length - LOAD_MORE_THRESHOLD) requestNextBatch();
         }
 
-        component.onAppend = function (line, data) {
-            if (!data || !data.smart_recs_feed) return;
-            feedLine = line;
-            feedData = data;
-            feedKnown = {};
-            uniqueRecommendationCards(feedData.results, feedKnown);
-            line.onFocus = maybeLoadMore;
-        };
-
         component.create = function () {
-            var self = this;
-            self.activity.loader(true);
+            if (component.activity && component.activity.loader) component.activity.loader(true);
             getRecommendations(object.force === true, function (payload) {
                 if (!alive) return;
-                var lines = jsonClone(payload.lines);
-                lines.forEach(function (line) {
-                    line.smart_recs_feed = true;
-                    line.line_type = 'smart-recs-feed';
-                    line.card_events = { onMenu: openTasteMenu };
-                });
-                lines.unshift({
-                    title: 'Настройка рекомендаций',
-                    results: [
-                        { id: 'filter-selection', media_type: 'movie', smart_recs_action: 'filters' },
-                        { id: 'mood-calibration', media_type: 'movie', smart_recs_action: 'mood' }
-                    ],
-                    nomore: true,
-                    line_type: 'smart-recs-actions',
-                    cardClass: RecommendationActionCard,
-                    card_events: { onEnter: openRecommendationAction }
-                });
-                self.build(lines);
+                appendAction({ id: 'filter-selection', media_type: 'movie', smart_recs_action: 'filters' });
+                appendAction({ id: 'mood-calibration', media_type: 'movie', smart_recs_action: 'mood' });
+                var initial = payload && payload.lines && payload.lines[0] ? payload.lines[0].results : [];
+                uniqueRecommendationCards(initial, feedKnown).forEach(function (card) { appendRecommendation(card, false); });
+                scroll.minus();
+                scroll.onEnd = requestNextBatch;
+                scroll.onScroll = limitVisible;
+                scroll.onWheel = function (step) {
+                    if (Lampa.Controller.own && !Lampa.Controller.own(component)) component.start();
+                    var navigation = navigator();
+                    if (navigation && navigation.move) navigation.move(step > 0 ? 'down' : 'up');
+                };
+                scroll.append(page);
+                html.appendChild(scroll.render(true));
+                built = true;
+                limitVisible();
+                if (component.activity && component.activity.loader) component.activity.loader(false);
+                if (component.activity && component.activity.toggle) component.activity.toggle();
                 if (!readFilters().configured) {
                     setTimeout(function () {
                         if (alive) openFilterEditor(function (changed) {
@@ -1824,12 +1905,59 @@
                     }, 150);
                 }
             });
-            return this.render();
+            return component.render();
+        };
+
+        component.start = function () {
+            Lampa.Controller.add('content', {
+                link: component,
+                toggle: function () {
+                    if (component.activity && component.activity.canRefresh && component.activity.canRefresh()) return false;
+                    Lampa.Controller.collectionSet(scroll.render(true));
+                    Lampa.Controller.collectionFocus(last || false, scroll.render(true));
+                },
+                left: function () {
+                    var navigation = navigator();
+                    if (navigation && navigation.canmove && navigation.canmove('left')) navigation.move('left');
+                    else Lampa.Controller.toggle('menu');
+                },
+                right: function () {
+                    var navigation = navigator();
+                    if (navigation && navigation.move) navigation.move('right');
+                },
+                up: function () {
+                    var navigation = navigator();
+                    if (navigation && navigation.canmove && navigation.canmove('up')) navigation.move('up');
+                    else Lampa.Controller.toggle('head');
+                },
+                down: function () {
+                    var navigation = navigator();
+                    if (navigation && navigation.canmove && navigation.canmove('down')) navigation.move('down');
+                    else requestNextBatch();
+                },
+                back: function () { Lampa.Activity.backward(); }
+            });
+            Lampa.Controller.toggle('content');
+        };
+
+        component.refresh = function () {
+            if (component.activity && component.activity.needRefresh) component.activity.needRefresh();
+        };
+
+        component.pause = function () {};
+        component.stop = function () {};
+
+        component.render = function (js) {
+            return js ? html : $(html);
         };
 
         component.destroy = function () {
             alive = false;
-            originalDestroy.call(this);
+            items.forEach(function (item) { if (item && item.destroy) item.destroy(); });
+            if (scroll && scroll.destroy) scroll.destroy();
+            if (html && html.remove) html.remove();
+            items = [];
+            recommendationData = [];
         };
 
         return component;

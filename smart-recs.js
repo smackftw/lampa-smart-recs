@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.3.0
+ * Lampa Smart Recs v0.3.1
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.3.0';
+    var VERSION = '0.3.1';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -35,7 +35,8 @@
         { id: 'action', title: 'Боевик', movie: [28], tv: [10759] },
         { id: 'drama', title: 'Драма', movie: [18], tv: [18] },
         { id: 'romance', title: 'Мелодрама', movie: [10749], tv: [10766] },
-        { id: 'thriller', title: 'Триллер', movie: [53], tv: [80, 9648] },
+        { id: 'thriller', title: 'Триллер', movie: [53], tv: [80] },
+        { id: 'detective', title: 'Детектив', movie: [9648], tv: [9648] },
         { id: 'horror', title: 'Ужасы', movie: [27], tv: [9648] },
         { id: 'comedy', title: 'Комедия', movie: [35], tv: [35] }
     ];
@@ -154,6 +155,7 @@
                 drama: 0,
                 romance: 0,
                 thriller: 0,
+                detective: 0,
                 horror: 0,
                 comedy: 0
             },
@@ -197,8 +199,19 @@
         }
         var wanted = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] > 0; });
         var excluded = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] < 0; });
+        var type = mediaType(card);
+        var wantedIds = [];
+        wanted.forEach(function (genre) {
+            filterGenreIds(genre, type).forEach(function (id) {
+                if (wantedIds.indexOf(id) < 0) wantedIds.push(id);
+            });
+        });
         if (wanted.length && !wanted.some(function (genre) { return cardHasFilterGenre(card, genre); })) return false;
-        if (excluded.some(function (genre) { return cardHasFilterGenre(card, genre); })) return false;
+        if (excluded.some(function (genre) {
+            return filterGenreIds(genre, type).some(function (id) {
+                return wantedIds.indexOf(id) < 0 && genreIds(card).indexOf(id) >= 0;
+            });
+        })) return false;
         return true;
     }
 
@@ -844,7 +857,7 @@
                     if (wantedId && genreIdsForRequest.indexOf(wantedId) < 0) genreIdsForRequest.push(wantedId);
                     excluded.forEach(function (genre) {
                         filterGenreIds(genre, media).forEach(function (id) {
-                            if (withoutGenres.indexOf(id) < 0) withoutGenres.push(id);
+                            if (wantedIds.indexOf(id) < 0 && withoutGenres.indexOf(id) < 0) withoutGenres.push(id);
                         });
                     });
 

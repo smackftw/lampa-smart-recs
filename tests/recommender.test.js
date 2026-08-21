@@ -74,6 +74,19 @@ test('applies type, tri-state genre, and rating filters', () => {
   assert.equal(core.matchesFilters(movie(13, [28], { media_type: 'tv', vote_average: 8, vote_count: 500 }), filters), false);
 });
 
+test('supports detective as a separate mystery filter', () => {
+  const filters = core.normalizeFilters({
+    schema: 1,
+    configured: true,
+    types: { movie: false, tv: true, anime: false, cartoon: false },
+    genres: { detective: 1, thriller: -1, horror: -1 },
+    rating: 0,
+  });
+
+  assert.equal(core.matchesFilters(movie(14, [9648], { media_type: 'tv' }), filters), true);
+  assert.equal(core.matchesFilters(movie(15, [80], { media_type: 'tv' }), filters), false);
+});
+
 test('builds positive and negative taste signals only from plugin feedback', () => {
   const liked = movie(1, [878, 12], { title: 'Liked sci-fi' });
   const disliked = movie(2, [27], { title: 'Dropped horror' });

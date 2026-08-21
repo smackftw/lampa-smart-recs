@@ -410,7 +410,7 @@ async function inspect() {
     const report = await inspect();
     console.log(JSON.stringify(report, null, 2));
     if (process.env.TRAILER_ONLY === '1') {
-      if (report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 7 || report.filterPrompt?.ratings !== 5 ||
+      if (report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
         report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
         report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||
         !report.filterResult?.configured || report.filterResult?.cards < 1 || report.filterResult?.invalid !== 0 ||
@@ -419,9 +419,9 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.3.0' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.3.1' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 ||
-      report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 7 || report.filterPrompt?.ratings !== 5 ||
+      report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
       report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||
       !report.filterResult?.configured || report.filterResult?.cards < 1 || report.filterResult?.invalid !== 0 ||

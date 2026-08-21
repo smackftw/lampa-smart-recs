@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.5.0
+ * Lampa Smart Recs v0.5.1
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.5.0';
+    var VERSION = '0.5.1';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -61,6 +61,7 @@
         mood: null,
         moodLoading: false,
         filterPromptOpen: false,
+        filterModalHtml: null,
         protectedFeatures: {},
         rerankers: [],
         likedRotation: 0,
@@ -2073,15 +2074,30 @@
         });
     }
 
+    function activateFilterModal(html) {
+        if (!runtime.filterPromptOpen || !html || !html.length) return;
+        var first = html.find('.smart-recs-filter-chip.selector').first();
+        var enabled = '';
+        try { enabled = Lampa.Controller.enabled().name; } catch (error) {}
+        if (enabled === 'modal' && html.find('.selector.focus').length) return;
+        if (Lampa.Modal && typeof Lampa.Modal.toggle === 'function') Lampa.Modal.toggle(first);
+        else {
+            Lampa.Controller.toggle('modal');
+            if (first.length && Lampa.Controller.collectionFocus) Lampa.Controller.collectionFocus(first[0], html);
+        }
+    }
+
     function openFilterEditor(onApply) {
         if (runtime.filterPromptOpen) return;
         runtime.filterPromptOpen = true;
         var previousController = Lampa.Controller.enabled().name;
         var draft = jsonClone(readFilters());
         var html = buildFilterEditor(draft);
+        runtime.filterModalHtml = html;
 
         function close() {
             runtime.filterPromptOpen = false;
+            runtime.filterModalHtml = null;
             Lampa.Modal.close();
             Lampa.Controller.toggle(previousController);
         }
@@ -2089,6 +2105,7 @@
         Lampa.Modal.open({
             title: 'Что показать сейчас',
             html: html,
+            select: html.find('.smart-recs-filter-chip.selector').first(),
             size: 'large',
             align: 'center',
             buttons: [
@@ -2122,6 +2139,9 @@
             },
             onBack: close
         });
+        activateFilterModal(html);
+        setTimeout(function () { activateFilterModal(html); }, 80);
+        setTimeout(function () { activateFilterModal(html); }, 300);
     }
 
     function editCurrentFilters() {
@@ -2392,7 +2412,9 @@
                 },
                 back: function () { Lampa.Activity.backward(); }
             });
-            Lampa.Controller.toggle('content');
+            if (runtime.filterPromptOpen && runtime.filterModalHtml) {
+                setTimeout(function () { activateFilterModal(runtime.filterModalHtml); }, 0);
+            } else Lampa.Controller.toggle('content');
         };
 
         component.refresh = function () {

@@ -131,6 +131,16 @@ async function inspect() {
     await delay(250);
   }
 
+  await evaluate("(() => { const card = document.querySelector('.activity--active .card.selector'); if (card) window.Lampa.Utils.trigger(card, 'hover:long'); return Boolean(card) })()");
+  await delay(100);
+  const tasteMenu = await evaluate(`({
+    opened: document.body.classList.contains('selectbox--open'),
+    title: document.querySelector('.selectbox__title')?.textContent || '',
+    items: Array.from(document.querySelectorAll('.selectbox-item__title')).map((item) => item.textContent.trim())
+  })`);
+  await evaluate("window.Lampa.Controller.back(); true");
+  await delay(100);
+
   await evaluate("window.LampaSmartRecs.calibrate(); true");
   let moodScreen;
   for (let attempt = 0; attempt < 200; attempt += 1) {
@@ -153,21 +163,20 @@ async function inspect() {
 
   const firstMoodTitle = moodScreen.cardTitle;
   await evaluate("window.Lampa.Controller.move('right')");
-  await delay(50);
-  await evaluate("window.Lampa.Controller.enter()");
   let remoteNavigation;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     remoteNavigation = await evaluate(`({
       records: window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0,
       cardTitle: document.querySelector('.smart-recs-mood__title')?.textContent || '',
       iframe: document.querySelectorAll('.smart-recs-mood__media iframe').length,
+      iframeSrc: document.querySelector('.smart-recs-mood__media iframe')?.getAttribute('src') || '',
       status: document.querySelector('.smart-recs-mood__status')?.textContent || ''
     })`);
-    if (remoteNavigation.records === 1 && remoteNavigation.cardTitle && remoteNavigation.cardTitle !== firstMoodTitle) break;
+    const previewResolved = remoteNavigation.iframe === 1 || remoteNavigation.status.includes('Трейлер не найден');
+    if (remoteNavigation.records === 1 && remoteNavigation.cardTitle && remoteNavigation.cardTitle !== firstMoodTitle && previewResolved) break;
     await delay(250);
   }
 
-  const leftFocused = await evaluate("(() => { window.Lampa.Controller.move('left'); return document.querySelector('.smart-recs-mood__button--watch')?.classList.contains('focus') || false })()");
   await evaluate("window.Lampa.Controller.back(); true");
   await delay(200);
   const afterBack = await evaluate(`({
@@ -183,8 +192,6 @@ async function inspect() {
   }
   for (let target = 2; target <= 10; target += 1) {
     await evaluate("window.Lampa.Controller.move('right')");
-    await delay(20);
-    await evaluate("window.Lampa.Controller.enter()");
     for (let attempt = 0; attempt < 80; attempt += 1) {
       const records = await evaluate("window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0");
       if (records >= target) break;
@@ -206,18 +213,22 @@ async function inspect() {
   }
 
   socket.close();
-  return { state, recommendationScreen, moodScreen, remoteNavigation, leftFocused, afterBack, moodActivation, exceptions, consoleMessages };
+  return { state, recommendationScreen, tasteMenu, moodScreen, remoteNavigation, afterBack, moodActivation, exceptions, consoleMessages };
 }
 
 (async () => {
   try {
     const report = await inspect();
     console.log(JSON.stringify(report, null, 2));
-    if (report.state?.plugin !== '0.2.0' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.2.1' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.moodScreen?.overlay !== 1 ||
+      !report.tasteMenu?.opened || report.tasteMenu?.title !== 'Оценить рекомендацию' ||
+      report.tasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
       report.moodScreen?.buttons?.join('|') !== 'Смотреть|Дальше' ||
       report.moodScreen?.controller !== 'smart_recs_mood' || report.remoteNavigation?.records !== 1 ||
-      !report.leftFocused || report.afterBack?.overlay !== 0 || report.afterBack?.draftRecords !== 1 ||
+      report.remoteNavigation?.status?.includes('Нажмите') ||
+      (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.iframeSrc?.includes('autoplay=1')) ||
+      report.afterBack?.overlay !== 0 || report.afterBack?.draftRecords !== 1 ||
       report.moodActivation?.activeRecords !== 10 || report.moodActivation?.hasDraft ||
       report.moodActivation?.recommendationEntry !== 1 || report.moodActivation?.profileSignals < 10 ||
       report.exceptions.length) process.exitCode = 1;

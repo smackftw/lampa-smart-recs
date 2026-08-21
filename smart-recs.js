@@ -1,12 +1,12 @@
 /**
- * Lampa Smart Recs v0.2.0
+ * Lampa Smart Recs v0.2.1
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.2.0';
+    var VERSION = '0.2.1';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -146,13 +146,14 @@
 
     function selectPreviewVideo(videos, language) {
         var allowed = { Trailer: 3, Teaser: 2, Clip: 1 };
+        var languages = isArray(language) ? language : [language || 'ru'];
         var selected = asArray(videos).filter(function (video) {
             return video && video.key && (!video.site || video.site === 'YouTube') && allowed[video.type];
         }).map(function (video, index) {
             var score = allowed[video.type] * 10;
+            var languageIndex = languages.indexOf(video.iso_639_1);
             if (video.official) score += 8;
-            if (video.iso_639_1 === language) score += 6;
-            else if (video.iso_639_1 === 'en') score += 2;
+            if (languageIndex >= 0) score += Math.max(2, 8 - languageIndex * 3);
             if (video.size >= 720) score += 1;
             return { video: video, score: score, index: index };
         }).sort(function (left, right) {
@@ -524,13 +525,13 @@
         };
         storageSet('feedback', feedback);
         clearCache();
-        notify(value > 0 ? 'Учту: показывать больше похожего' : 'Учту: показывать меньше похожего');
+        notify(value > 0 ? 'Нравится — лента обновится' : 'Не нравится — лента обновится');
     }
 
     function clearFeedback() {
         storageSet('feedback', { schema: FEEDBACK_SCHEMA, items: {} });
         clearCache();
-        notify('Локальные оценки рекомендаций очищены');
+        notify('Оценки «нравится / не нравится» очищены');
     }
 
     function clearMood() {
@@ -870,23 +871,32 @@
         });
     }
 
-    function tmdbVideos(card, callback) {
+    function interfaceVideoLanguages() {
+        var language = 'ru';
+        try { language = Lampa.Storage.get('language', 'ru') || 'ru'; } catch (error) {}
+        language = String(language).toLowerCase().split(/[-_]/)[0];
+        var result = [language];
+        var russianFallback = ['uk', 'be', 'kk', 'ky', 'uz', 'tg', 'hy', 'az', 'ka'];
+        if (language !== 'ru' && russianFallback.indexOf(language) >= 0) result.push('ru');
+        if (result.indexOf('en') < 0) result.push('en');
+        return result;
+    }
+
+    function tmdbVideos(card, languages, callback) {
         var type = mediaType(card);
-        var finished = false;
-        function done(result) {
-            if (finished) return;
-            finished = true;
-            callback(result && result.results ? result.results : []);
+        var collected = [];
+        var cursor = 0;
+        function next() {
+            if (cursor >= languages.length) return callback(collected);
+            var language = languages[cursor++];
+            tmdbGet(type + '/' + card.id + '/videos', { langs: language }, function (items) {
+                collected = collected.concat(items);
+                var exact = items.filter(function (video) { return video && video.iso_639_1 === language; });
+                if (selectPreviewVideo(exact, [language])) callback(collected);
+                else next();
+            });
         }
-        try {
-            if (Lampa.Api.sources.tmdb.videos) {
-                Lampa.Api.sources.tmdb.videos({ method: type, id: card.id }, done, function () { done(null); });
-            } else {
-                tmdbGet(type + '/' + card.id + '/videos', {}, function (items) { done({ results: items }); });
-            }
-        } catch (error) {
-            done(null);
-        }
+        next();
     }
 
     function cardsFromLines(lines) {
@@ -1044,6 +1054,7 @@
         var watchedSeconds = 0;
         var shownAt = 0;
         var playbackTimer = null;
+        var playbackRetries = 0;
         var serial = 0;
         var changing = false;
         var destroyed = false;
@@ -1080,6 +1091,7 @@
 
         function destroyFrame() {
             clearTimeout(playbackTimer);
+            playbackRetries = 0;
             if (frame) post('destroy');
             if (frame) frame.remove();
             frame = null;
@@ -1091,10 +1103,9 @@
         function loadVideo(card, callback) {
             var key = cardKey(card);
             if (Object.prototype.hasOwnProperty.call(videoCache, key)) return callback(videoCache[key]);
-            tmdbVideos(card, function (videos) {
-                var language = 'ru';
-                try { language = Lampa.Storage.field('tmdb_lang') || 'ru'; } catch (error) {}
-                videoCache[key] = selectPreviewVideo(videos, language);
+            var languages = interfaceVideoLanguages();
+            tmdbVideos(card, languages, function (videos) {
+                videoCache[key] = selectPreviewVideo(videos, languages);
                 callback(videoCache[key]);
             });
         }
@@ -1110,16 +1121,19 @@
             frame.onload = function () { frameWindow = frame.contentWindow; };
             media.empty().append(frame);
             frameWindow = frame.contentWindow;
-            playbackTimer = setTimeout(function () {
-                if (frame && !frame.classList.contains('ready')) {
-                    html.find('.smart-recs-mood__status').removeClass('hide').text('Нажмите ← или →, чтобы запустить трейлер');
-                }
-            }, 7000);
         }
 
         function previewNext() {
             var ranked = rankMoodCards(cards, session.records, shown);
-            if (ranked.length) loadVideo(ranked[0], function () {});
+            ranked.slice(0, 4).forEach(function (card) { loadVideo(card, function () {}); });
+        }
+
+        function retryAutoplay() {
+            clearTimeout(playbackTimer);
+            if (!frame || frame.classList.contains('ready') || playbackRetries >= 5) return;
+            playbackRetries += 1;
+            post('play');
+            playbackTimer = setTimeout(retryAutoplay, 1200);
         }
 
         function showNext() {
@@ -1198,6 +1212,7 @@
                 frameWindow = frame && frame.contentWindow;
                 post('init', { volume: 100 });
                 post('play');
+                if (type === 'ready') retryAutoplay();
             } else if (type === 'stateChange' && data.state === 1) {
                 clearTimeout(playbackTimer);
                 if (frame) frame.classList.add('ready');
@@ -1227,8 +1242,8 @@
                     Lampa.Controller.collectionSet(html);
                     Lampa.Controller.collectionFocus(nextButton, html);
                 },
-                left: function () { post('play'); Lampa.Controller.focus(watchButton[0]); },
-                right: function () { post('play'); Lampa.Controller.focus(nextButton[0]); },
+                left: function () { act('watch'); },
+                right: function () { act('next'); },
                 back: function () { self.finish(false); }
             });
             Lampa.Controller.toggle('smart_recs_mood');
@@ -1278,6 +1293,22 @@
         });
     }
 
+    function openTasteMenu(target, card) {
+        var enabled = Lampa.Controller.enabled().name;
+        Lampa.Select.show({
+            title: 'Оценить рекомендацию',
+            items: [
+                { title: 'Нравится', value: 1 },
+                { title: 'Не нравится', value: -1 }
+            ],
+            onSelect: function (item) {
+                setFeedback(card, item.value);
+                Lampa.Controller.toggle(enabled);
+            },
+            onBack: function () { Lampa.Controller.toggle(enabled); }
+        });
+    }
+
     function refresh() {
         clearCache();
         getRecommendations(true, function (payload) {
@@ -1298,6 +1329,9 @@
                 if (!payload.lines.length) self.empty();
                 else {
                     var lines = jsonClone(payload.lines);
+                    lines.forEach(function (line) {
+                        line.card_events = { onMenu: openTasteMenu };
+                    });
                     lines.unshift({
                         title: 'Текущее настроение',
                         results: [{ id: 'mood-calibration', media_type: 'movie' }],
@@ -1409,7 +1443,7 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: { name: PREFIX + 'clear_feedback', type: 'button' },
-            field: { name: 'Очистить «больше/меньше похожего»', description: 'История и обычные закладки Lampa не удаляются.' },
+            field: { name: 'Очистить «нравится / не нравится»', description: 'История и обычные закладки Lampa не удаляются.' },
             onChange: clearFeedback
         });
         Lampa.SettingsApi.addParam({
@@ -1434,19 +1468,6 @@
                 description: 'Будущие AI-функции используют серверную проверку кода и временный токен. Секреты не хранятся в плагине.'
             }
         });
-    }
-
-    function registerFeedbackMenus() {
-        Lampa.Manifest.plugins = {
-            type: 'video',
-            onContextMenu: function () { return { title: 'Больше похожего' }; },
-            onContextLauch: function (card) { setFeedback(card, 1); }
-        };
-        Lampa.Manifest.plugins = {
-            type: 'video',
-            onContextMenu: function () { return { title: 'Меньше похожего' }; },
-            onContextLauch: function (card) { setFeedback(card, -1); }
-        };
     }
 
     function registerHomeRow() {
@@ -1551,7 +1572,6 @@
         addStyles();
         Lampa.Component.add(COMPONENT, RecommendationsComponent);
         registerSettings();
-        registerFeedbackMenus();
         registerHomeRow();
         invalidateOnTasteChange();
         updateMenu();

@@ -119,6 +119,15 @@ test('chooses an official trailer in the current language', () => {
   assert.equal(selected.key, 'russian');
 });
 
+test('uses ordered trailer language fallbacks', () => {
+  const selected = core.selectPreviewVideo([
+    { key: 'english', site: 'YouTube', type: 'Trailer', iso_639_1: 'en', official: true },
+    { key: 'russian', site: 'YouTube', type: 'Trailer', iso_639_1: 'ru', official: true },
+  ], ['uk', 'ru', 'en']);
+
+  assert.equal(selected.key, 'russian');
+});
+
 test('mood signals distinguish a quick skip from a watched preview', () => {
   assert.ok(core.moodSignalWeight('next', 2, true) < 0);
   assert.ok(core.moodSignalWeight('next', 25, true) > 0);

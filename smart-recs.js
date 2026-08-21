@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.4.2
+ * Lampa Smart Recs v0.4.3
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.4.2';
+    var VERSION = '0.4.3';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -1762,7 +1762,7 @@
         else startMoodCalibration();
     }
 
-    function openTasteMenu(target, card) {
+    function openTasteMenu(target, card, onFeedback) {
         var enabled = Lampa.Controller.enabled().name;
         Lampa.Select.show({
             title: 'Оценить рекомендацию',
@@ -1771,8 +1771,11 @@
                 { title: 'Не нравится', value: -1 }
             ],
             onSelect: function (item) {
-                setFeedback(card, item.value);
+                var removeImmediately = item.value < 0 && typeof onFeedback === 'function';
+                setFeedback(card, item.value, removeImmediately);
                 Lampa.Controller.toggle(enabled);
+                if (typeof onFeedback === 'function') onFeedback(item.value);
+                if (removeImmediately) notify('Не нравится — скрыто');
             },
             onBack: function () { Lampa.Controller.toggle(enabled); }
         });
@@ -1862,12 +1865,49 @@
                     source: 'tmdb'
                 });
             };
-            item.onMenu = openTasteMenu;
+            item.onMenu = function (target, data) {
+                openTasteMenu(target, data, function (value) {
+                    if (value < 0) removeRecommendation(item, data);
+                });
+            };
             grid.appendChild(item.render(true));
             items.push(item);
             recommendationData.push(card);
             if (append && Lampa.Controller.own && Lampa.Controller.own(component)) {
                 Lampa.Controller.collectionAppend(item.render(true));
+            }
+        }
+
+        function removeRecommendation(item, card) {
+            var itemIndex = items.indexOf(item);
+            var key = cardKey(card);
+            var recommendationIndex = recommendationData.map(cardKey).indexOf(key);
+            if (itemIndex < 0 || recommendationIndex < 0) return;
+
+            var node = item.render(true);
+            items.splice(itemIndex, 1);
+            recommendationData.splice(recommendationIndex, 1);
+
+            if (item.destroy) item.destroy();
+            else if (node && node.remove) node.remove();
+
+            var nextIndex = Math.min(itemIndex, items.length - 1);
+            var nextItem = nextIndex >= 0 ? items[nextIndex] : null;
+            var nextTarget = nextItem && nextItem.render(true);
+            active = Math.max(0, nextIndex);
+            last = nextTarget || null;
+
+            if (nextTarget) {
+                scroll.update(nextTarget);
+                limitVisible();
+                if ((!Lampa.Controller.own || Lampa.Controller.own(component)) && Lampa.Controller.collectionSet && Lampa.Controller.collectionFocus) {
+                    Lampa.Controller.collectionSet(scroll.render(true));
+                    Lampa.Controller.collectionFocus(nextTarget, scroll.render(true));
+                }
+            }
+
+            if (recommendationData.length < LOAD_MORE_THRESHOLD || recommendationIndex >= recommendationData.length - LOAD_MORE_THRESHOLD) {
+                requestNextBatch();
             }
         }
 

@@ -16,6 +16,8 @@ test('boots against the current public Lampa plugin surface', async () => {
   const tmdbRequests = [];
   const renderedCards = [];
   const watchedIds = new Set([12]);
+  const notifications = [];
+  const focusedTargets = [];
 
   function element(className = '') {
     const classes = new Set(className.split(/\s+/).filter(Boolean));
@@ -28,11 +30,21 @@ test('boots against the current public Lampa plugin surface', async () => {
         contains(name) { return classes.has(name); },
         toggle(name, state) { if (state === false) classes.delete(name); else classes.add(name); },
       },
-      appendChild(child) { this.children.push(child); return child; },
+      appendChild(child) {
+        if (child.parentNode && child.parentNode !== this) child.remove();
+        child.parentNode = this;
+        this.children.push(child);
+        return child;
+      },
       addEventListener() {},
       setAttribute(name, value) { this[name] = value; },
       getAttribute(name) { return this[name]; },
-      remove() {},
+      remove() {
+        if (!this.parentNode) return;
+        const index = this.parentNode.children.indexOf(this);
+        if (index >= 0) this.parentNode.children.splice(index, 1);
+        this.parentNode = null;
+      },
     };
   }
 
@@ -124,7 +136,7 @@ test('boots against the current public Lampa plugin surface', async () => {
     Background: { change() {} },
     Utils: { cardImgBackground() { return ''; } },
     Layer: { visible() {} },
-    Noty: { show() {} },
+    Noty: { show(message) { notifications.push(message); } },
     Controller: {
       enabled() { return { name: 'settings' }; },
       toggle() {},
@@ -132,7 +144,7 @@ test('boots against the current public Lampa plugin surface', async () => {
       add() {},
       collectionAppend() {},
       collectionSet() {},
-      collectionFocus() {},
+      collectionFocus(target) { focusedTargets.push(target); },
     },
     Select: { show(definition) { lampa.lastSelect = definition; } },
     Input: { edit() {} },
@@ -142,14 +154,14 @@ test('boots against the current public Lampa plugin surface', async () => {
       this.update = function update() {};
       this.append = function append(child) { node.appendChild(child); };
       this.render = function render(js) { return js ? node : jquery(node); };
-      this.destroy = function destroy() {};
+      this.destroy = function destroy() { node.remove(); };
     },
     Card: function Card(data) {
       const node = element('card selector');
       this.data = data;
       this.create = function create() { renderedCards.push(this); };
       this.render = function render(js) { return js ? node : jquery(node); };
-      this.destroy = function destroy() {};
+      this.destroy = function destroy() { node.remove(); };
     },
   };
 
@@ -195,7 +207,7 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.4.2');
+  assert.equal(context.window.LampaSmartRecs.version, '0.4.3');
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);
@@ -236,6 +248,16 @@ test('boots against the current public Lampa plugin surface', async () => {
   assert.ok(renderedCards.length > initialFeedLength);
   assert.ok(tmdbRequests.some((request) => request.page >= 3));
   assert.equal(storage.get('lampa_smart_recs_mood').active.expiresAt, moodUpdatedAt + 48 * 60 * 60 * 1000);
+
+  const dislikedCard = renderedCards[0];
+  const dislikedNode = dislikedCard.render(true);
+  assert.ok(dislikedNode.parentNode);
+  dislikedCard.onMenu(dislikedNode, dislikedCard.data);
+  lampa.lastSelect.onSelect(lampa.lastSelect.items.find((item) => item.value === -1));
+  assert.equal(dislikedNode.parentNode, null);
+  assert.equal(storage.get('lampa_smart_recs_feedback').items[`${dislikedCard.data.media_type}:${dislikedCard.data.id}`].value, -1);
+  assert.equal(notifications.at(-1), 'Не нравится — скрыто');
+  assert.ok(focusedTargets.length > 0);
 
   const moodReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_mood');
   const fullReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_all');

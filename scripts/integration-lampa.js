@@ -230,15 +230,45 @@ async function inspect() {
   phase('filters applied');
   if (!filterResult?.configured || filterResult.cards < 1 || filterResult.invalid !== 0) throw new Error(`Filter stage failed: ${JSON.stringify(filterResult)}`);
 
-  await evaluate("(() => { const card = document.querySelector('.activity--active .card.selector'); if (card) window.Lampa.Utils.trigger(card, 'hover:long'); return Boolean(card) })()");
+  const dislikeBefore = await evaluate(`({
+    cards: document.querySelectorAll('.smart-recs-grid .card').length
+  })`);
+  await evaluate("(() => { const card = document.querySelector('.smart-recs-grid .card.selector'); if (card) window.Lampa.Utils.trigger(card, 'hover:long'); return Boolean(card) })()");
   await delay(100);
   const tasteMenu = await evaluate(`({
     opened: document.body.classList.contains('selectbox--open'),
     title: document.querySelector('.selectbox__title')?.textContent || '',
     items: Array.from(document.querySelectorAll('.selectbox-item__title')).map((item) => item.textContent.trim())
   })`);
-  await evaluate("window.Lampa.Controller.back(); true");
-  await delay(100);
+  await evaluate(`(() => {
+    const label = Array.from(document.querySelectorAll('.selectbox-item__title')).find((item) => item.textContent.trim() === 'Не нравится');
+    const item = label?.closest('.selectbox-item');
+    if (item) window.Lampa.Utils.trigger(item, 'hover:enter');
+    return Boolean(item);
+  })()`);
+  let dislikeRemoval;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    dislikeRemoval = await evaluate(`(() => {
+      const feedback = window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items || {};
+      const disliked = Object.entries(feedback).find((entry) => entry[1]?.value < 0);
+      return {
+        cards: document.querySelectorAll('.smart-recs-grid .card').length,
+        focused: Boolean(document.querySelector('.smart-recs-grid .card.focus')),
+        feedbackKey: disliked?.[0] || '',
+        feedbackValue: disliked?.[1]?.value || 0
+      };
+    })()`);
+    if (dislikeRemoval.cards === dislikeBefore.cards - 1 && dislikeRemoval.focused && dislikeRemoval.feedbackValue === -1) break;
+    await delay(50);
+  }
+  if (dislikeRemoval?.feedbackKey) {
+    await evaluate(`(() => {
+      const feedback = window.Lampa.Storage.get('lampa_smart_recs_feedback', { schema: 1, items: {} });
+      delete feedback.items[${JSON.stringify(dislikeRemoval.feedbackKey)}];
+      window.Lampa.Storage.set('lampa_smart_recs_feedback', feedback);
+      return true;
+    })()`);
+  }
 
   await evaluate("window.LampaSmartRecs.calibrate(); true");
   let moodScreen;
@@ -315,7 +345,7 @@ async function inspect() {
   if (process.env.TRAILER_ONLY === '1') {
     const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
     socket.close();
-    return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, moodScreen, leftSelection, remoteNavigation, bridgeMessages, exceptions, consoleMessages };
+    return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, remoteNavigation, bridgeMessages, exceptions, consoleMessages };
   }
 
   const secondMoodTitle = remoteNavigation.cardTitle;
@@ -423,7 +453,7 @@ async function inspect() {
 
   const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
   socket.close();
-  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, moodScreen, leftSelection, remoteNavigation, moodTasteMenu, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
+  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, remoteNavigation, moodTasteMenu, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
 }
 
 (async () => {
@@ -436,12 +466,13 @@ async function inspect() {
         report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
         report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||
         !report.filterResult?.configured || report.filterResult?.cards < 1 || report.filterResult?.invalid !== 0 ||
+        report.dislikeRemoval?.cards !== report.dislikeBefore?.cards - 1 || !report.dislikeRemoval?.focused || report.dislikeRemoval?.feedbackValue !== -1 ||
         (report.moodScreen?.iframe === 1 && !report.moodScreen?.ready) ||
         (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.ready) ||
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.4.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.4.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -450,6 +481,7 @@ async function inspect() {
       report.moodScreen?.overlay !== 1 ||
       !report.tasteMenu?.opened || report.tasteMenu?.title !== 'Оценить рекомендацию' ||
       report.tasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
+      report.dislikeRemoval?.cards !== report.dislikeBefore?.cards - 1 || !report.dislikeRemoval?.focused || report.dislikeRemoval?.feedbackValue !== -1 ||
       report.moodScreen?.buttons?.join('|') !== 'Смотреть|Дальше' ||
       (report.moodScreen?.iframe === 1 && !report.moodScreen?.ready) ||
       report.moodScreen?.controller !== 'smart_recs_mood' || !report.leftSelection?.watchFocused || report.leftSelection?.records !== 0 ||

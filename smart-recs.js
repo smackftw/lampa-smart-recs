@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.3.2
+ * Lampa Smart Recs v0.3.3
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.3.2';
+    var VERSION = '0.3.3';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -19,6 +19,10 @@
     var MOOD_TTL = 6 * 60 * 60 * 1000;
     var MOOD_DRAFT_TTL = 24 * 60 * 60 * 1000;
     var PREVIEW_SECONDS = 30;
+    var INITIAL_RECOMMENDATION_LIMIT = 40;
+    var MORE_RECOMMENDATION_LIMIT = 20;
+    var LOAD_MORE_THRESHOLD = 8;
+    var EMPTY_BATCH_RETRIES = 3;
     var PREFIX = 'lampa_smart_recs_';
     var COMPONENT = 'lampa_smart_recs';
     var MENU_CLASS = 'lampa-smart-recs-menu';
@@ -86,6 +90,26 @@
     function cardKey(card) {
         if (!card || !card.id) return '';
         return mediaType(card) + ':' + String(card.id);
+    }
+
+    function recommendationBatchPlan(batch) {
+        batch = Math.max(1, Math.floor(asNumber(batch, 1)));
+        return {
+            sourcePage: batch,
+            discoveryPages: [batch * 2 - 1, batch * 2]
+        };
+    }
+
+    function uniqueRecommendationCards(cards, known) {
+        var result = [];
+        known = known || {};
+        asArray(cards).forEach(function (card) {
+            var key = cardKey(card);
+            if (!key || known[key]) return;
+            known[key] = true;
+            result.push(card);
+        });
+        return result;
     }
 
     function genreIds(card) {
@@ -508,6 +532,8 @@
         qualityScore: qualityScore,
         scoreCandidate: scoreCandidate,
         selectDiverse: selectDiverse,
+        recommendationBatchPlan: recommendationBatchPlan,
+        uniqueRecommendationCards: uniqueRecommendationCards,
         simpleHash: simpleHash,
         selectPreviewVideo: selectPreviewVideo,
         moodSignalWeight: moodSignalWeight,
@@ -904,11 +930,12 @@
         });
     }
 
-    function recommendationTasks(profile, pool) {
+    function recommendationTasks(profile, pool, batch) {
         var tasks = [];
         var mode = setting('mode', 'balanced');
         var seedLimit = mode === 'precise' ? 8 : mode === 'explore' ? 4 : 6;
         var filters = normalizeFilters(profile.filters);
+        var plan = recommendationBatchPlan(batch);
 
         positiveSignalsForFilters(profile).slice(0, seedLimit).forEach(function (signal) {
             var type = mediaType(signal.card);
@@ -916,7 +943,7 @@
             var anchorKey = signal.key;
             var endpoint = type + '/' + signal.card.id + '/recommendations';
             tasks.push(function (done) {
-                tmdbGet(endpoint, {}, function (items) {
+                tmdbGet(endpoint, { page: plan.sourcePage }, function (items) {
                     if (items.length) {
                         pool.add(items, {
                             mediaType: type,
@@ -926,7 +953,7 @@
                         });
                         done();
                     } else {
-                        tmdbGet(type + '/' + signal.card.id + '/similar', {}, function (similar) {
+                        tmdbGet(type + '/' + signal.card.id + '/similar', { page: plan.sourcePage }, function (similar) {
                             pool.add(similar, {
                                 mediaType: type,
                                 weight: Math.max(0.6, signal.weight * 0.8),
@@ -946,6 +973,7 @@
             if (genres.length) {
                 tasks.push(function (done) {
                     tmdbGet('discover/' + type, {
+                        page: plan.sourcePage,
                         genres: genres.join(','),
                         sort_by: 'vote_average.desc',
                         filter: {
@@ -965,7 +993,7 @@
             }
 
             tasks.push(function (done) {
-                tmdbGet('trending/' + type + '/week', {}, function (items) {
+                tmdbGet('trending/' + type + '/week', { page: plan.sourcePage }, function (items) {
                     pool.add(items, {
                         mediaType: type,
                         weight: profile.coldStart ? 2.2 : 0.8,
@@ -977,14 +1005,15 @@
             });
         });
 
-        addDiscoveryTasks(tasks, filters, pool, [1, 2], 1.9);
+        addDiscoveryTasks(tasks, filters, pool, plan.discoveryPages, 1.9);
 
         return tasks;
     }
 
-    function finalizeCandidates(profile, pool) {
+    function finalizeCandidates(profile, pool, excluded, limit, batch) {
         var mode = setting('mode', 'balanced');
         var hideSeen = boolSetting('hide_seen', true);
+        excluded = excluded || {};
         var entries = Object.keys(pool.items).map(function (key) {
             var entry = pool.items[key];
             entry.score = scoreCandidate(entry, profile, mode, pool.maximumSource);
@@ -993,6 +1022,7 @@
             if (!entry.card.poster_path && !entry.card.backdrop_path) return false;
             if (!matchesFilters(entry.card, profile.filters)) return false;
             if (hideSeen && profile.seen[entry.key]) return false;
+            if (excluded[entry.key]) return false;
             return true;
         }).sort(function (left, right) {
             return right.score - left.score;
@@ -1007,7 +1037,7 @@
             });
         }
 
-        var selected = selectDiverse(entries, 40, mode);
+        var selected = selectDiverse(entries, limit || INITIAL_RECOMMENDATION_LIMIT, mode);
         var lines = [];
         if (selected.length) {
             lines.push({
@@ -1023,16 +1053,21 @@
                 generatedAt: Date.now(),
                 signals: profile.signals.length,
                 candidates: entries.length,
-                coldStart: profile.coldStart
+                coldStart: profile.coldStart,
+                batch: Math.max(1, asNumber(batch, 1))
             }
         };
     }
 
-    function generateRecommendations(profile, callback) {
+    function generateRecommendationBatch(profile, batch, excluded, limit, callback) {
         var pool = new CandidatePool(profile);
-        runQueue(recommendationTasks(profile, pool), 3, function () {
-            callback(finalizeCandidates(profile, pool));
+        runQueue(recommendationTasks(profile, pool, batch), 3, function () {
+            callback(finalizeCandidates(profile, pool, excluded, limit, batch));
         });
+    }
+
+    function generateRecommendations(profile, callback) {
+        generateRecommendationBatch(profile, 1, {}, INITIAL_RECOMMENDATION_LIMIT, callback);
     }
 
     function getRecommendations(force, callback) {
@@ -1709,6 +1744,54 @@
         var component = new Lampa.InteractionMain(object);
         var alive = true;
         var originalDestroy = component.destroy;
+        var feedLine = null;
+        var feedData = null;
+        var feedKnown = {};
+        var nextBatch = 2;
+        var loadingMore = false;
+        var emptyBatches = 0;
+        var feedExhausted = false;
+
+        function requestNextBatch() {
+            if (!alive || loadingMore || feedExhausted || !feedData || !feedLine) return;
+            loadingMore = true;
+            var batch = nextBatch++;
+            var profile = buildRuntimeProfile();
+            generateRecommendationBatch(profile, batch, feedKnown, MORE_RECOMMENDATION_LIMIT, function (payload) {
+                if (!alive) return;
+                loadingMore = false;
+                var line = payload && payload.lines && payload.lines[0];
+                var incoming = uniqueRecommendationCards(line && line.results, feedKnown);
+                if (!incoming.length) {
+                    emptyBatches += 1;
+                    if (emptyBatches >= EMPTY_BATCH_RETRIES) feedExhausted = true;
+                    else setTimeout(requestNextBatch, 0);
+                    return;
+                }
+                emptyBatches = 0;
+                Array.prototype.push.apply(feedData.results, incoming);
+                feedLine.attach();
+            });
+        }
+
+        function maybeLoadMore(card) {
+            if (!feedData || !feedData.results) return;
+            var index = feedData.results.indexOf(card);
+            if (index < 0) {
+                var key = cardKey(card);
+                index = feedData.results.map(cardKey).indexOf(key);
+            }
+            if (index >= feedData.results.length - LOAD_MORE_THRESHOLD) requestNextBatch();
+        }
+
+        component.onAppend = function (line, data) {
+            if (!data || !data.smart_recs_feed) return;
+            feedLine = line;
+            feedData = data;
+            feedKnown = {};
+            uniqueRecommendationCards(feedData.results, feedKnown);
+            line.onFocus = maybeLoadMore;
+        };
 
         component.create = function () {
             var self = this;
@@ -1717,6 +1800,8 @@
                 if (!alive) return;
                 var lines = jsonClone(payload.lines);
                 lines.forEach(function (line) {
+                    line.smart_recs_feed = true;
+                    line.line_type = 'smart-recs-feed';
                     line.card_events = { onMenu: openTasteMenu };
                 });
                 lines.unshift({

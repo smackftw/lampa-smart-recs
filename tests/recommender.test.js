@@ -169,6 +169,30 @@ test('diversity selector does not mutate its input', () => {
   assert.deepEqual(entries, original);
 });
 
+test('plans non-overlapping source pages for endless recommendation batches', () => {
+  const first = core.recommendationBatchPlan(1);
+  const second = core.recommendationBatchPlan(2);
+  const third = core.recommendationBatchPlan(3);
+
+  assert.equal(first.sourcePage, 1);
+  assert.deepEqual(Array.from(first.discoveryPages), [1, 2]);
+  assert.equal(second.sourcePage, 2);
+  assert.deepEqual(Array.from(second.discoveryPages), [3, 4]);
+  assert.deepEqual(Array.from(third.discoveryPages), [5, 6]);
+});
+
+test('removes repeated cards while extending the recommendation feed', () => {
+  const known = { 'movie:1': true };
+  const incoming = core.uniqueRecommendationCards([
+    movie(1, [18]),
+    movie(2, [35]),
+    movie(2, [35]),
+    movie(2, [35], { media_type: 'tv' }),
+  ], known);
+
+  assert.deepEqual(Array.from(incoming, (card) => core.cardKey(card)), ['movie:2', 'tv:2']);
+});
+
 test('chooses an official trailer in the current language', () => {
   const selected = core.selectPreviewVideo([
     { key: 'clip', site: 'YouTube', type: 'Clip', iso_639_1: 'ru', official: true },

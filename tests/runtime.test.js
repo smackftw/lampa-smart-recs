@@ -13,6 +13,10 @@ test('boots against the current public Lampa plugin surface', async () => {
   const rows = [];
   const pluginMenus = [];
   const timers = [];
+  const tmdbRequests = [];
+  let builtLines = [];
+  let feedLine;
+  let feedAttachCount = 0;
 
   function listener() {
     return { follow() {}, remove() {} };
@@ -47,10 +51,13 @@ test('boots against the current public Lampa plugin surface', async () => {
       sources: {
         tmdb: {
           get(method, params, success) {
+            const page = Number(params?.page || 1);
+            const type = method.includes('/tv/') || method.startsWith('trending/tv') || method === 'discover/tv' ? 'tv' : 'movie';
+            tmdbRequests.push({ method, page });
             success({
               results: [{
-                id: method.includes('/tv/') || method.startsWith('trending/tv') ? 2 : 1,
-                media_type: method.startsWith('trending/tv') ? 'tv' : 'movie',
+                id: page * 10 + (type === 'tv' ? 2 : 1),
+                media_type: type,
                 title: 'Candidate',
                 genre_ids: [18],
                 vote_average: 8,
@@ -83,7 +90,19 @@ test('boots against the current public Lampa plugin surface', async () => {
     },
     Select: { show(definition) { lampa.lastSelect = definition; } },
     Input: { edit() {} },
-    InteractionMain: function InteractionMain() {},
+    InteractionMain: function InteractionMain() {
+      this.activity = { loader() {} };
+      this.build = function build(lines) {
+        builtLines = lines;
+        lines.forEach((data) => {
+          const line = { attach() { feedAttachCount += 1; } };
+          if (this.onAppend) this.onAppend(line, data);
+          if (data.smart_recs_feed) feedLine = line;
+        });
+      };
+      this.render = function render() { return {}; };
+      this.destroy = function destroy() {};
+    },
   };
 
   const context = {
@@ -107,13 +126,23 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.3.2');
+  assert.equal(context.window.LampaSmartRecs.version, '0.3.3');
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);
   assert.ok(storage.has('lampa_smart_recs_cache'));
   assert.equal(storage.get('lampa_smart_recs_cache').payload.lines.length, 1);
   assert.equal(storage.get('lampa_smart_recs_cache').payload.lines[0].title, 'Для вас');
+
+  const recommendationComponent = components.get('lampa_smart_recs')({ force: false });
+  recommendationComponent.create();
+  timers.splice(0).forEach((fn) => fn());
+  const feed = builtLines.find((line) => line.smart_recs_feed);
+  const initialFeedLength = feed.results.length;
+  feedLine.onFocus(feed.results[initialFeedLength - 1]);
+  assert.ok(feed.results.length > initialFeedLength);
+  assert.ok(feedAttachCount > 0);
+  assert.ok(tmdbRequests.some((request) => request.page >= 3));
 
   const moodReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_mood');
   const fullReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_all');

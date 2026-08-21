@@ -1,12 +1,12 @@
 /**
- * Lampa Smart Recs v0.2.1
+ * Lampa Smart Recs v0.2.2
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.2.1';
+    var VERSION = '0.2.2';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -164,11 +164,11 @@
 
     function moodSignalWeight(action, watchedSeconds, hasVideo) {
         var seconds = Math.max(0, asNumber(watchedSeconds, 0));
-        if (action === 'watch') return 9;
+        if (action === 'watch' || action === 'like') return 9;
         if (action === 'complete') return hasVideo === false ? 1.5 : 4;
-        if (seconds >= 22) return 1.5;
-        if (seconds >= 12) return -0.5;
-        if (seconds >= 5) return -2;
+        if (seconds >= 22) return -1.5;
+        if (seconds >= 12) return -2;
+        if (seconds >= 5) return -3;
         return hasVideo === false ? -2.5 : -4;
     }
 
@@ -502,6 +502,7 @@
         if (active) {
             asArray(active.records).forEach(function (record, index) {
                 if (!record || !record.card) return;
+                if (feedback.items[cardKey(record.card)]) return;
                 combined.items['mood:' + index + ':' + cardKey(record.card)] = {
                     value: record.weight >= 0 ? 1 : -1,
                     weight: record.weight,
@@ -513,7 +514,7 @@
         return combined;
     }
 
-    function setFeedback(card, value) {
+    function setFeedback(card, value, quiet) {
         var safe = compactCard(card);
         var key = cardKey(safe);
         if (!key) return;
@@ -525,7 +526,7 @@
         };
         storageSet('feedback', feedback);
         clearCache();
-        notify(value > 0 ? 'Нравится — лента обновится' : 'Не нравится — лента обновится');
+        if (!quiet) notify(value > 0 ? 'Нравится — лента обновится' : 'Не нравится — лента обновится');
     }
 
     function clearFeedback() {
@@ -1183,6 +1184,8 @@
                 weight: moodSignalWeight(action, watched, Boolean(currentVideo)),
                 updatedAt: Date.now()
             });
+            if (action === 'next') setFeedback(current, -1, true);
+            if (action === 'like' || action === 'watch') setFeedback(current, 1, true);
             saveSession(false);
             if (count() === MOOD_MINIMUM) clearCache();
             updateProgress();
@@ -1202,6 +1205,26 @@
             }
             if (count() >= MOOD_MAXIMUM) return self.finish(true);
             showNext();
+        }
+
+        function openMoodTasteMenu() {
+            if (changing || !current) return;
+            post('pause');
+            Lampa.Select.show({
+                title: 'Оценить трейлер',
+                items: [
+                    { title: 'Нравится', action: 'like' },
+                    { title: 'Не нравится', action: 'next' }
+                ],
+                onSelect: function (item) {
+                    Lampa.Controller.toggle('smart_recs_mood');
+                    act(item.action);
+                },
+                onBack: function () {
+                    Lampa.Controller.toggle('smart_recs_mood');
+                    post('play');
+                }
+            });
         }
 
         function onMessage(event) {
@@ -1242,8 +1265,9 @@
                     Lampa.Controller.collectionSet(html);
                     Lampa.Controller.collectionFocus(nextButton, html);
                 },
-                left: function () { act('watch'); },
+                left: function () { Lampa.Controller.focus(watchButton[0]); },
                 right: function () { act('next'); },
+                long: openMoodTasteMenu,
                 back: function () { self.finish(false); }
             });
             Lampa.Controller.toggle('smart_recs_mood');

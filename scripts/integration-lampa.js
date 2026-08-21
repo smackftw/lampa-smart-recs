@@ -162,6 +162,13 @@ async function inspect() {
   }
 
   const firstMoodTitle = moodScreen.cardTitle;
+  const leftSelection = await evaluate(`(() => {
+    window.Lampa.Controller.move('left');
+    return {
+      watchFocused: document.querySelector('.smart-recs-mood__button--watch')?.classList.contains('focus') || false,
+      records: window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0
+    };
+  })()`);
   await evaluate("window.Lampa.Controller.move('right')");
   let remoteNavigation;
   for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -177,6 +184,30 @@ async function inspect() {
     await delay(250);
   }
 
+  const secondMoodTitle = remoteNavigation.cardTitle;
+  await evaluate("window.Lampa.Controller.long()");
+  await delay(100);
+  const moodTasteMenu = await evaluate(`({
+    opened: document.body.classList.contains('selectbox--open'),
+    title: document.querySelector('.selectbox__title')?.textContent || '',
+    items: Array.from(document.querySelectorAll('.selectbox-item__title')).map((item) => item.textContent.trim())
+  })`);
+  await evaluate("window.Lampa.Controller.enter()");
+  let likedNavigation;
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    likedNavigation = await evaluate(`({
+      records: window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0,
+      cardTitle: document.querySelector('.smart-recs-mood__title')?.textContent || '',
+      iframe: document.querySelectorAll('.smart-recs-mood__media iframe').length,
+      iframeSrc: document.querySelector('.smart-recs-mood__media iframe')?.getAttribute('src') || '',
+      status: document.querySelector('.smart-recs-mood__status')?.textContent || '',
+      feedback: Object.values(window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items || {}).map((item) => item.value).sort()
+    })`);
+    const previewResolved = likedNavigation.iframe === 1 || likedNavigation.status.includes('Трейлер не найден');
+    if (likedNavigation.records === 2 && likedNavigation.cardTitle && likedNavigation.cardTitle !== secondMoodTitle && previewResolved) break;
+    await delay(100);
+  }
+
   await evaluate("window.Lampa.Controller.back(); true");
   await delay(200);
   const afterBack = await evaluate(`({
@@ -190,7 +221,7 @@ async function inspect() {
     if (await evaluate("document.querySelectorAll('.smart-recs-mood').length")) break;
     await delay(250);
   }
-  for (let target = 2; target <= 10; target += 1) {
+  for (let target = 3; target <= 10; target += 1) {
     await evaluate("window.Lampa.Controller.move('right')");
     for (let attempt = 0; attempt < 80; attempt += 1) {
       const records = await evaluate("window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft?.records?.length || 0");
@@ -212,25 +243,59 @@ async function inspect() {
     await delay(250);
   }
 
+
+  await evaluate("window.LampaSmartRecs.calibrate(); true");
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (await evaluate("document.querySelectorAll('.smart-recs-mood').length")) break;
+    await delay(250);
+  }
+  const watchBefore = await evaluate(`(() => {
+    const title = document.querySelector('.smart-recs-mood__title')?.textContent || '';
+    window.Lampa.Controller.move('left');
+    return {
+      title,
+      focused: document.querySelector('.smart-recs-mood__button--watch')?.classList.contains('focus') || false,
+      component: window.Lampa?.Activity?.active()?.component || ''
+    };
+  })()`);
+  await evaluate("window.Lampa.Controller.enter()");
+  let watchAction;
+  for (let attempt = 0; attempt < 160; attempt += 1) {
+    watchAction = await evaluate(`({
+      overlay: document.querySelectorAll('.smart-recs-mood').length,
+      component: window.Lampa?.Activity?.active()?.component || '',
+      positiveFeedback: Object.values(window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items || {}).filter((item) => item.value > 0).length
+    })`);
+    if (watchAction.overlay === 0 && watchAction.component === 'full' && watchAction.positiveFeedback >= 2) break;
+    await delay(250);
+  }
+
   socket.close();
-  return { state, recommendationScreen, tasteMenu, moodScreen, remoteNavigation, afterBack, moodActivation, exceptions, consoleMessages };
+  return { state, recommendationScreen, tasteMenu, moodScreen, leftSelection, remoteNavigation, moodTasteMenu, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, exceptions, consoleMessages };
 }
 
 (async () => {
   try {
     const report = await inspect();
     console.log(JSON.stringify(report, null, 2));
-    if (report.state?.plugin !== '0.2.1' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.2.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.moodScreen?.overlay !== 1 ||
       !report.tasteMenu?.opened || report.tasteMenu?.title !== 'Оценить рекомендацию' ||
       report.tasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
       report.moodScreen?.buttons?.join('|') !== 'Смотреть|Дальше' ||
-      report.moodScreen?.controller !== 'smart_recs_mood' || report.remoteNavigation?.records !== 1 ||
+      report.moodScreen?.controller !== 'smart_recs_mood' || !report.leftSelection?.watchFocused || report.leftSelection?.records !== 0 ||
+      report.remoteNavigation?.records !== 1 ||
       report.remoteNavigation?.status?.includes('Нажмите') ||
       (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.iframeSrc?.includes('autoplay=1')) ||
-      report.afterBack?.overlay !== 0 || report.afterBack?.draftRecords !== 1 ||
+      !report.moodTasteMenu?.opened || report.moodTasteMenu?.title !== 'Оценить трейлер' ||
+      report.moodTasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
+      report.likedNavigation?.records !== 2 || report.likedNavigation?.feedback?.join('|') !== '-1|1' ||
+      (report.likedNavigation?.iframe === 1 && !report.likedNavigation?.iframeSrc?.includes('autoplay=1')) ||
+      report.afterBack?.overlay !== 0 || report.afterBack?.draftRecords !== 2 ||
       report.moodActivation?.activeRecords !== 10 || report.moodActivation?.hasDraft ||
       report.moodActivation?.recommendationEntry !== 1 || report.moodActivation?.profileSignals < 10 ||
+      !report.watchBefore?.focused || report.watchAction?.overlay !== 0 || report.watchAction?.component !== 'full' ||
+      report.watchAction?.positiveFeedback < 2 ||
       report.exceptions.length) process.exitCode = 1;
   } catch (error) {
     console.error(error.stack || error.message);

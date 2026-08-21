@@ -92,14 +92,18 @@ async function inspect() {
 
   await command('Runtime.enable');
   await command('Page.enable');
+  await command('Page.addScriptToEvaluateOnNewDocument', {
+    source: "localStorage.setItem('language', 'ru')",
+  });
   await evaluate("localStorage.setItem('language', 'ru')");
   await command('Page.reload', { ignoreCache: true });
   await delay(500);
 
   let state;
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  for (let attempt = 0; attempt < 160; attempt += 1) {
     state = await evaluate(`({
       appready: Boolean(window.appready),
+      language: localStorage.getItem('language'),
       plugin: window.LampaSmartRecs && window.LampaSmartRecs.version,
       menu: document.querySelectorAll('.lampa-smart-recs-menu').length,
       appChildren: document.querySelector('#app')?.children.length || 0,

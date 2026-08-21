@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.5.2
+ * Lampa Smart Recs v0.5.3
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.5.2';
+    var VERSION = '0.5.3';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -302,6 +302,13 @@
         if (seconds >= 12) return -2.5;
         if (seconds >= 5) return -5;
         return hasVideo === false ? -4 : -8;
+    }
+
+    function previewClipDuration(duration, startAt) {
+        var total = Math.max(0, asNumber(duration, 0));
+        var offset = Math.max(0, asNumber(startAt, 0));
+        if (total <= offset) return PREVIEW_SECONDS;
+        return clamp(total - offset, 1, PREVIEW_SECONDS);
     }
 
     function trailerTasteWeight(action, watchedSeconds, hasVideo) {
@@ -617,6 +624,7 @@
         selectPreviewVideo: selectPreviewVideo,
         timelineShowsCompleted: timelineShowsCompleted,
         moodSignalWeight: moodSignalWeight,
+        previewClipDuration: previewClipDuration,
         trailerTasteWeight: trailerTasteWeight,
         tasteDecay: tasteDecay,
         genomeFeatures: genomeFeatures,
@@ -1609,15 +1617,16 @@
             '.smart-recs-filter-chip{padding:.62em .9em;border-radius:.65em;background:rgba(255,255,255,.09);border:.12em solid rgba(255,255,255,.12);min-width:6.5em;text-align:center;box-sizing:border-box}.smart-recs-filter-chip.is-selected,.smart-recs-filter-chip.is-wanted{background:#dce8df;color:#172019;border-color:#dce8df}.smart-recs-filter-chip.is-excluded{background:#653e43;color:#fff0f0;border-color:#8b545b}.smart-recs-filter-chip.focus{box-shadow:0 0 0 .18em #fff;transform:scale(1.035)}',
             '.smart-recs-filter-editor__legend{font-size:.82em;opacity:.65;line-height:1.45}',
             '.smart-recs-mood{position:fixed;inset:0;z-index:999;background:#0b0e0c;color:#f4f6f4;overflow:hidden;font-family:inherit}',
-            '.smart-recs-mood__media{position:absolute;inset:0;background:#111 center/cover no-repeat}.smart-recs-mood__media iframe{width:100%;height:100%;border:0;display:block;opacity:0;transition:opacity .35s ease}.smart-recs-mood__media iframe.ready{opacity:1}',
-            '.smart-recs-mood__shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(6,8,7,.28) 0%,transparent 34%,rgba(6,8,7,.9) 86%,#080a09 100%)}',
-            '.smart-recs-mood__top{position:absolute;left:4.2em;right:4.2em;top:2.6em;display:flex;align-items:center;gap:1.2em}.smart-recs-mood__counter{font-size:.9em;letter-spacing:.06em;white-space:nowrap;opacity:.85}',
+            '.smart-recs-mood__media{position:absolute;inset:0;z-index:0;background:#111 center/cover no-repeat}.smart-recs-mood__media iframe{width:100%;height:100%;border:0;display:block;opacity:0;transition:opacity .35s ease}.smart-recs-mood__media iframe.ready{opacity:1}',
+            '.smart-recs-mood__shade{position:absolute;inset:0;z-index:1;pointer-events:none;background:linear-gradient(180deg,rgba(6,8,7,.28) 0%,transparent 34%,rgba(6,8,7,.9) 86%,#080a09 100%)}',
+            '.smart-recs-mood__youtube-mask{position:absolute;left:0;right:0;z-index:1;pointer-events:none}.smart-recs-mood__youtube-mask--bottom{bottom:0;height:4.2em;background:linear-gradient(180deg,transparent 0%,rgba(8,10,9,.96) 38%,#080a09 100%)}',
+            '.smart-recs-mood__top{position:absolute;left:0;right:0;top:0;z-index:2;padding:1.45em 4.2em 1.05em;box-sizing:border-box;display:flex;align-items:center;gap:1.2em;background:linear-gradient(180deg,#080a09 0%,#080a09 68%,rgba(8,10,9,.82) 84%,transparent 100%)}.smart-recs-mood__counter{font-size:.9em;letter-spacing:.06em;white-space:nowrap;opacity:.85}',
             '.smart-recs-mood__track{height:.28em;background:rgba(255,255,255,.22);border-radius:1em;overflow:hidden;flex:1}.smart-recs-mood__track span{display:block;width:0;height:100%;background:#edf5ef;transition:width .15s linear}',
-            '.smart-recs-mood__bottom{position:absolute;left:4.2em;right:4.2em;bottom:3.3em;display:block}',
-            '.smart-recs-mood__info{max-width:75%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__eyebrow{font-size:.82em;letter-spacing:.09em;text-transform:uppercase;opacity:.66;margin-bottom:.6em}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650}.smart-recs-mood__overview{font-size:.9em;line-height:1.45;opacity:.76;margin-top:.75em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+            '.smart-recs-mood__bottom{position:absolute;left:4.2em;right:4.2em;bottom:3.3em;z-index:2;display:block}',
+            '.smart-recs-mood__info{max-width:75%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650}',
             '.smart-recs-mood__actions{display:flex;gap:.8em;flex-shrink:0;margin-top:1.15em}.smart-recs-mood__button{min-width:7.6em;padding:.82em 1em;border-radius:.72em;background:rgba(238,243,239,.15);border:.12em solid rgba(255,255,255,.26);font-size:1.05em;text-align:center;box-sizing:border-box}.smart-recs-mood__button.focus{background:#eef3ef;color:#101612;border-color:#eef3ef;transform:scale(1.045)}',
-            '.smart-recs-mood__button--like.focus{background:#d5e7d9;border-color:#d5e7d9}.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.58);font-size:.9em}.smart-recs-mood__status.hide{display:none}',
-            '@media(max-width:700px){.smart-recs-actions-row{display:grid;grid-template-columns:1fr 1fr}.smart-recs-filter-entry,.smart-recs-mood-entry{width:100%}.smart-recs-mood__top{left:1.4em;right:1.4em;top:1.3em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__overview{display:none}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
+            '.smart-recs-mood__button--like.focus{background:#d5e7d9;border-color:#d5e7d9}.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;z-index:2;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.58);font-size:.9em}.smart-recs-mood__status.hide{display:none}',
+            '@media(max-width:700px){.smart-recs-actions-row{display:grid;grid-template-columns:1fr 1fr}.smart-recs-filter-entry,.smart-recs-mood-entry{width:100%}.smart-recs-mood__top{left:0;right:0;top:0;padding:.9em 1.4em .8em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
         ].join('');
         document.head.appendChild(style);
     }
@@ -1696,10 +1705,10 @@
         var store = readMoodStore();
         var session = store.draft || newMoodSession();
         var html = $('<div class="smart-recs-mood">' +
-            '<div class="smart-recs-mood__media"></div><div class="smart-recs-mood__shade"></div>' +
+            '<div class="smart-recs-mood__media"></div><div class="smart-recs-mood__shade"></div><div class="smart-recs-mood__youtube-mask smart-recs-mood__youtube-mask--bottom"></div>' +
             '<div class="smart-recs-mood__top"><div class="smart-recs-mood__counter"></div><div class="smart-recs-mood__track"><span></span></div></div>' +
             '<div class="smart-recs-mood__status">Загружаем трейлер…</div>' +
-            '<div class="smart-recs-mood__bottom"><div class="smart-recs-mood__info"><div class="smart-recs-mood__eyebrow"></div><div class="smart-recs-mood__title"></div><div class="smart-recs-mood__overview"></div></div>' +
+            '<div class="smart-recs-mood__bottom"><div class="smart-recs-mood__info"><div class="smart-recs-mood__title"></div></div>' +
             '<div class="smart-recs-mood__actions"><div class="smart-recs-mood__button smart-recs-mood__button--watch selector">Смотреть</div><div class="smart-recs-mood__button smart-recs-mood__button--like selector">Нравится</div><div class="smart-recs-mood__button smart-recs-mood__button--next selector">Дальше</div></div></div></div>');
         var media = html.find('.smart-recs-mood__media');
         var watchButton = html.find('.smart-recs-mood__button--watch');
@@ -1711,6 +1720,7 @@
         var frameWindow = null;
         var bridgeId = '';
         var clipStart = 0;
+        var clipDuration = PREVIEW_SECONDS;
         var watchedSeconds = 0;
         var shownAt = 0;
         var playbackTimer = null;
@@ -1733,7 +1743,7 @@
             var amount = count();
             var target = amount < MOOD_MINIMUM ? MOOD_MINIMUM : MOOD_MAXIMUM;
             html.find('.smart-recs-mood__counter').text(amount < MOOD_MINIMUM ? amount + ' / ' + MOOD_MINIMUM + ' · минимум' : amount + ' / ' + MOOD_MAXIMUM + ' · настроение готово');
-            var actionProgress = currentVideo ? clamp(watchedSeconds / PREVIEW_SECONDS, 0, 1) : 0;
+            var actionProgress = currentVideo ? clamp(watchedSeconds / clipDuration, 0, 1) : 0;
             var total = clamp((amount + actionProgress) / target * 100, 0, 100);
             html.find('.smart-recs-mood__track span').css('width', total + '%');
         }
@@ -1761,6 +1771,7 @@
             frameWindow = null;
             bridgeId = '';
             currentVideo = null;
+            clipDuration = PREVIEW_SECONDS;
             ignorePlayback = true;
         }
 
@@ -1803,6 +1814,7 @@
 
         function createFrame(video) {
             clipStart = video.type === 'Teaser' ? 0 : 8;
+            clipDuration = PREVIEW_SECONDS;
             playerSequence += 1;
             ignorePlayback = false;
             playbackRetries = 0;
@@ -1812,6 +1824,9 @@
                 frame.src = TRAILER_PLAYER_URL + '?v=' + encodeURIComponent(VERSION) + '&bridgeId=' + encodeURIComponent(bridgeId) + '&videoId=' + encodeURIComponent(video.key) + '&autoplay=1&start=' + clipStart + '&sequence=' + playerSequence;
                 frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
                 frame.setAttribute('allowfullscreen', 'true');
+                frame.setAttribute('tabindex', '-1');
+                frame.setAttribute('aria-hidden', 'true');
+                frame.style.pointerEvents = 'none';
                 frame.onload = function () { if (frame) frameWindow = frame.contentWindow; };
                 media.empty().append(frame);
                 frameWindow = frame.contentWindow;
@@ -1857,8 +1872,6 @@
             var backdrop = imageForCard(current);
             media.css('background-image', backdrop ? 'url("' + backdrop.replace(/"/g, '%22') + '")' : 'none');
             html.find('.smart-recs-mood__title').text(titleOf(current));
-            html.find('.smart-recs-mood__overview').text(current.overview || 'Оцените по трейлеру, постеру и описанию.');
-            html.find('.smart-recs-mood__eyebrow').text((mediaType(current) === 'tv' ? 'Сериал' : 'Фильм') + (yearOf(current) ? ' · ' + yearOf(current) : ''));
             html.find('.smart-recs-mood__status').removeClass('hide').text('Загружаем трейлер…');
             updateProgress();
             loadVideo(current, function (video) {
@@ -1931,9 +1944,10 @@
                 if (frame) frame.classList.add('ready');
                 html.find('.smart-recs-mood__status').addClass('hide');
             } else if (type === 'time') {
+                clipDuration = previewClipDuration(data.duration, clipStart);
                 watchedSeconds = Math.max(watchedSeconds, asNumber(data.currentTime, clipStart) - clipStart);
                 updateProgress();
-                if (watchedSeconds >= PREVIEW_SECONDS) act('complete');
+                if (watchedSeconds >= clipDuration - 0.25) act('complete');
             } else if (type === 'stateChange' && data.state === 0 && frame && frame.classList.contains('ready')) {
                 act('complete');
             } else if (type === 'error') {

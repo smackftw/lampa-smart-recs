@@ -231,6 +231,13 @@ test('mood signals distinguish a quick skip from a watched preview', () => {
   assert.ok(core.moodSignalWeight('watch', 3, true) > core.moodSignalWeight('complete', 30, true));
 });
 
+test('trailer progress uses the playable part of short videos', () => {
+  assert.equal(core.previewClipDuration(22, 8), 14);
+  assert.equal(core.previewClipDuration(120, 8), 30);
+  assert.equal(core.previewClipDuration(18, 0), 18);
+  assert.equal(core.previewClipDuration(0, 8), 30);
+});
+
 test('reserves only a quarter of each feed batch for exact likes', () => {
   assert.equal(core.likedQuota(40, 1), 10);
   assert.equal(core.likedQuota(20, 2), 5);

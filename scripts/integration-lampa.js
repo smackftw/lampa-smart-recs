@@ -294,7 +294,12 @@ async function inspect() {
       iframe: document.querySelectorAll('.smart-recs-mood__media iframe').length,
       ready: document.querySelector('.smart-recs-mood__media iframe')?.classList.contains('ready') || false,
       cardTitle: document.querySelector('.smart-recs-mood__title')?.textContent || '',
-      status: document.querySelector('.smart-recs-mood__status')?.textContent || ''
+      status: document.querySelector('.smart-recs-mood__status')?.textContent || '',
+      descriptionNodes: document.querySelectorAll('.smart-recs-mood__overview, .smart-recs-mood__eyebrow').length,
+      playerPointerEvents: (() => {
+        const item = document.querySelector('.smart-recs-mood__media iframe');
+        return item ? getComputedStyle(item).pointerEvents : '';
+      })()
     })`);
     if (moodScreen.ready || moodScreen.status.includes('Трейлер не найден') || moodScreen.status.includes('Трейлер недоступен')) break;
     await delay(250);
@@ -303,7 +308,7 @@ async function inspect() {
   if (moodScreen?.iframe === 1 && !moodScreen?.ready) throw new Error(`First trailer failed: ${JSON.stringify(moodScreen)}`);
 
   if (process.env.SCREENSHOT_PATH) {
-    await delay(1200);
+    await delay(Number(process.env.SCREENSHOT_DELAY || 2500));
     const capture = await command('Page.captureScreenshot', { format: 'png' });
     fs.writeFileSync(process.env.SCREENSHOT_PATH, Buffer.from(capture.data, 'base64'));
   }
@@ -493,7 +498,7 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.5.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.5.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.controller !== 'modal' || !report.filterPrompt?.focused || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -504,6 +509,7 @@ async function inspect() {
       report.tasteMenu?.items?.join('|') !== 'Нравится|Не нравится' ||
       report.dislikeRemoval?.cards !== report.dislikeBefore?.cards - 1 || !report.dislikeRemoval?.focused || report.dislikeRemoval?.feedbackValue !== -1 ||
       report.moodScreen?.buttons?.join('|') !== 'Смотреть|Нравится|Дальше' ||
+      report.moodScreen?.descriptionNodes !== 0 || report.moodScreen?.playerPointerEvents !== 'none' ||
       (report.moodScreen?.iframe === 1 && !report.moodScreen?.ready) ||
       report.moodScreen?.controller !== 'smart_recs_mood' || !report.leftSelection?.likeFocused || !report.leftSelection?.watchFocused || report.leftSelection?.records !== 0 ||
       !report.rightSelection?.likeFocused || !report.rightSelection?.nextFocused || report.rightSelection?.records !== 0 ||

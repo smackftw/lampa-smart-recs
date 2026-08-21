@@ -1,17 +1,24 @@
 /**
- * Lampa Smart Recs v0.1.0
+ * Lampa Smart Recs v0.2.0
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
 (function () {
     'use strict';
 
-    var VERSION = '0.1.0';
+    var VERSION = '0.2.0';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
+    var MOOD_SCHEMA = 1;
+    var MOOD_MINIMUM = 10;
+    var MOOD_MAXIMUM = 60;
+    var MOOD_TTL = 6 * 60 * 60 * 1000;
+    var MOOD_DRAFT_TTL = 24 * 60 * 60 * 1000;
+    var PREVIEW_SECONDS = 30;
     var PREFIX = 'lampa_smart_recs_';
     var COMPONENT = 'lampa_smart_recs';
     var MENU_CLASS = 'lampa-smart-recs-menu';
+    var STYLE_ID = 'lampa-smart-recs-style';
 
     var CATEGORY_WEIGHTS = {
         like: 6,
@@ -29,6 +36,8 @@
         initialized: false,
         menuButton: null,
         inFlight: null,
+        mood: null,
+        moodLoading: false,
         protectedFeatures: {},
         sessions: {}
     };
@@ -135,6 +144,68 @@
         return (hash >>> 0).toString(36);
     }
 
+    function selectPreviewVideo(videos, language) {
+        var allowed = { Trailer: 3, Teaser: 2, Clip: 1 };
+        var selected = asArray(videos).filter(function (video) {
+            return video && video.key && (!video.site || video.site === 'YouTube') && allowed[video.type];
+        }).map(function (video, index) {
+            var score = allowed[video.type] * 10;
+            if (video.official) score += 8;
+            if (video.iso_639_1 === language) score += 6;
+            else if (video.iso_639_1 === 'en') score += 2;
+            if (video.size >= 720) score += 1;
+            return { video: video, score: score, index: index };
+        }).sort(function (left, right) {
+            return right.score - left.score || left.index - right.index;
+        });
+        return selected.length ? selected[0].video : null;
+    }
+
+    function moodSignalWeight(action, watchedSeconds, hasVideo) {
+        var seconds = Math.max(0, asNumber(watchedSeconds, 0));
+        if (action === 'watch') return 9;
+        if (action === 'complete') return hasVideo === false ? 1.5 : 4;
+        if (seconds >= 22) return 1.5;
+        if (seconds >= 12) return -0.5;
+        if (seconds >= 5) return -2;
+        return hasVideo === false ? -2.5 : -4;
+    }
+
+    function buildMoodTaste(records) {
+        var taste = { genres: {}, types: { movie: 0, tv: 0 }, maximum: 0 };
+        asArray(records).forEach(function (record) {
+            if (!record || !record.card) return;
+            var weight = clamp(asNumber(record.weight, 0), -10, 10);
+            taste.types[mediaType(record.card)] += weight;
+            genreIds(record.card).forEach(function (genre) {
+                taste.genres[genre] = (taste.genres[genre] || 0) + weight;
+                taste.maximum = Math.max(taste.maximum, Math.abs(taste.genres[genre]));
+            });
+        });
+        return taste;
+    }
+
+    function moodCardScore(card, taste) {
+        var genres = genreIds(card);
+        var affinity = 0;
+        genres.forEach(function (genre) { affinity += taste.genres[genre] || 0; });
+        if (genres.length && taste.maximum) affinity /= taste.maximum * Math.min(genres.length, 3);
+        var base = clamp(asNumber(card && card.smart_recs_score, 50) / 100, 0, 1);
+        var typeBias = clamp((taste.types[mediaType(card)] || 0) / 30, -1, 1);
+        var jitter = (parseInt(simpleHash(cardKey(card)), 36) % 100) / 10000;
+        return base * 0.36 + affinity * 0.50 + typeBias * 0.09 + qualityScore(card) * 0.05 + jitter;
+    }
+
+    function rankMoodCards(cards, records, excluded) {
+        var taste = buildMoodTaste(records);
+        excluded = excluded || {};
+        return asArray(cards).filter(function (card) {
+            return card && cardKey(card) && !excluded[cardKey(card)];
+        }).slice().sort(function (left, right) {
+            return moodCardScore(right, taste) - moodCardScore(left, taste);
+        });
+    }
+
     function normalizeMap(map) {
         var maximum = 0;
         var key;
@@ -209,7 +280,8 @@
         Object.keys(feedback).forEach(function (key) {
             var item = feedback[key];
             if (!item || !item.card) return;
-            addSignal(item.card, item.value > 0 ? 8 : -9, item.value > 0 ? 'manual_more' : 'manual_less', 0);
+            var weight = typeof item.weight === 'number' ? clamp(item.weight, -10, 10) : item.value > 0 ? 8 : -9;
+            addSignal(item.card, weight, item.origin || (item.value > 0 ? 'manual_more' : 'manual_less'), 0);
             seen[cardKey(item.card)] = true;
         });
 
@@ -343,7 +415,12 @@
         qualityScore: qualityScore,
         scoreCandidate: scoreCandidate,
         selectDiverse: selectDiverse,
-        simpleHash: simpleHash
+        simpleHash: simpleHash,
+        selectPreviewVideo: selectPreviewVideo,
+        moodSignalWeight: moodSignalWeight,
+        buildMoodTaste: buildMoodTaste,
+        moodCardScore: moodCardScore,
+        rankMoodCards: rankMoodCards
     };
 
     if (window.__LAMPA_SMART_RECS_TEST__) {
@@ -394,6 +471,47 @@
         return feedback;
     }
 
+    function emptyMoodStore() {
+        return { schema: MOOD_SCHEMA, active: null, draft: null };
+    }
+
+    function readMoodStore() {
+        var mood = storageGet('mood', emptyMoodStore());
+        var changed = false;
+        if (!mood || mood.schema !== MOOD_SCHEMA) mood = emptyMoodStore();
+        if (mood.active && (!mood.active.expiresAt || mood.active.expiresAt <= Date.now())) {
+            mood.active = null;
+            changed = true;
+        }
+        if (mood.draft && (!mood.draft.updatedAt || Date.now() - mood.draft.updatedAt > MOOD_DRAFT_TTL)) {
+            mood.draft = null;
+            changed = true;
+        }
+        if (changed) storageSet('mood', mood);
+        return mood;
+    }
+
+    function learningFeedback() {
+        var feedback = readFeedback();
+        var combined = { schema: FEEDBACK_SCHEMA, items: {} };
+        Object.keys(feedback.items).forEach(function (key) {
+            combined.items[key] = feedback.items[key];
+        });
+        var active = readMoodStore().active;
+        if (active) {
+            asArray(active.records).forEach(function (record, index) {
+                if (!record || !record.card) return;
+                combined.items['mood:' + index + ':' + cardKey(record.card)] = {
+                    value: record.weight >= 0 ? 1 : -1,
+                    weight: record.weight,
+                    origin: 'current_mood',
+                    card: record.card
+                };
+            });
+        }
+        return combined;
+    }
+
     function setFeedback(card, value) {
         var safe = compactCard(card);
         var key = cardKey(safe);
@@ -415,6 +533,12 @@
         notify('Локальные оценки рекомендаций очищены');
     }
 
+    function clearMood() {
+        storageSet('mood', emptyMoodStore());
+        clearCache();
+        notify('Текущее настроение сброшено');
+    }
+
     function favoriteList(type) {
         try {
             return asArray(Lampa.Favorite.get({ type: type }));
@@ -428,7 +552,7 @@
         Object.keys(CATEGORY_WEIGHTS).forEach(function (type) {
             lists[type] = favoriteList(type);
         });
-        var profile = buildProfileFromData(lists, readFeedback(), function (card) {
+        var profile = buildProfileFromData(lists, learningFeedback(), function (card) {
             if (!Lampa.Timeline || !Lampa.Timeline.watched) return 0;
             return Lampa.Timeline.watched(card, false);
         });
@@ -436,6 +560,7 @@
             profile.signature,
             setting('mode', 'balanced'),
             boolSetting('hide_seen', true),
+            readMoodStore().active ? readMoodStore().active.updatedAt : 0,
             VERSION
         ].join('|'));
         return profile;
@@ -745,6 +870,414 @@
         });
     }
 
+    function tmdbVideos(card, callback) {
+        var type = mediaType(card);
+        var finished = false;
+        function done(result) {
+            if (finished) return;
+            finished = true;
+            callback(result && result.results ? result.results : []);
+        }
+        try {
+            if (Lampa.Api.sources.tmdb.videos) {
+                Lampa.Api.sources.tmdb.videos({ method: type, id: card.id }, done, function () { done(null); });
+            } else {
+                tmdbGet(type + '/' + card.id + '/videos', {}, function (items) { done({ results: items }); });
+            }
+        } catch (error) {
+            done(null);
+        }
+    }
+
+    function cardsFromLines(lines) {
+        var cards = [];
+        var used = {};
+        asArray(lines).forEach(function (line) {
+            asArray(line && line.results).forEach(function (card) {
+                var safe = compactCard(card);
+                var key = cardKey(safe);
+                if (!key || used[key]) return;
+                safe.smart_recs_score = asNumber(card.smart_recs_score, 50);
+                safe.smart_recs_reason = card.smart_recs_reason || '';
+                used[key] = true;
+                cards.push(safe);
+            });
+        });
+        return cards;
+    }
+
+    function prepareMoodCandidates(payload, profile, callback) {
+        var cards = cardsFromLines(payload && payload.lines);
+        var used = {};
+        cards.forEach(function (card) { used[cardKey(card)] = true; });
+
+        function add(items, type) {
+            asArray(items).forEach(function (card) {
+                var safe = compactCard(card, type);
+                var key = cardKey(safe);
+                if (!key || used[key] || safe.adult || (!safe.poster_path && !safe.backdrop_path) || profile.seen[key]) return;
+                safe.smart_recs_score = 45;
+                used[key] = true;
+                cards.push(safe);
+            });
+        }
+
+        var tasks = [];
+        ['movie', 'tv'].forEach(function (type) {
+            [2, 3].forEach(function (page) {
+                tasks.push(function (done) {
+                    tmdbGet('trending/' + type + '/week', { page: page }, function (items) {
+                        add(items, type);
+                        done();
+                    });
+                });
+            });
+            var genres = topGenres(profile, type, 3);
+            if (genres.length) {
+                tasks.push(function (done) {
+                    tmdbGet('discover/' + type, {
+                        page: 1,
+                        genres: genres.join(','),
+                        sort_by: 'popularity.desc',
+                        filter: { 'include_adult': 'false' }
+                    }, function (items) {
+                        add(items, type);
+                        done();
+                    });
+                });
+            }
+        });
+
+        runQueue(tasks, 3, function () { callback(cards); });
+    }
+
+    function addStyles() {
+        if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return;
+        var style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = [
+            '.smart-recs-mood-entry{width:25em;height:11.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#e8eee9,#b9c8bd);color:#152019;display:flex;align-items:flex-end;position:relative;padding:1.5em;box-sizing:border-box}',
+            '.smart-recs-mood-entry:after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 82% 16%,rgba(255,255,255,.75),transparent 34%)}',
+            '.smart-recs-mood-entry__icon{position:absolute;right:1.1em;top:1em;width:4.2em;height:4.2em;opacity:.82}',
+            '.smart-recs-mood-entry__text{position:relative;z-index:1}.smart-recs-mood-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-mood-entry__subtitle{font-size:.86em;opacity:.72;max-width:18em}',
+            '.smart-recs-mood-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
+            '.smart-recs-mood{position:fixed;inset:0;z-index:999;background:#0b0e0c;color:#f4f6f4;overflow:hidden;font-family:inherit}',
+            '.smart-recs-mood__media{position:absolute;inset:0;background:#111 center/cover no-repeat}.smart-recs-mood__media iframe{width:100%;height:100%;border:0;display:block;opacity:0;transition:opacity .35s ease}.smart-recs-mood__media iframe.ready{opacity:1}',
+            '.smart-recs-mood__shade{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(6,8,7,.28) 0%,transparent 34%,rgba(6,8,7,.9) 86%,#080a09 100%)}',
+            '.smart-recs-mood__top{position:absolute;left:4.2em;right:4.2em;top:2.6em;display:flex;align-items:center;gap:1.2em}.smart-recs-mood__counter{font-size:.9em;letter-spacing:.06em;white-space:nowrap;opacity:.85}',
+            '.smart-recs-mood__track{height:.28em;background:rgba(255,255,255,.22);border-radius:1em;overflow:hidden;flex:1}.smart-recs-mood__track span{display:block;width:0;height:100%;background:#edf5ef;transition:width .15s linear}',
+            '.smart-recs-mood__bottom{position:absolute;left:4.2em;right:4.2em;bottom:3.3em;display:flex;align-items:flex-end;justify-content:space-between;gap:3em}',
+            '.smart-recs-mood__info{max-width:57%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__eyebrow{font-size:.82em;letter-spacing:.09em;text-transform:uppercase;opacity:.66;margin-bottom:.6em}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650}.smart-recs-mood__overview{font-size:.9em;line-height:1.45;opacity:.76;margin-top:.75em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
+            '.smart-recs-mood__actions{display:flex;gap:.8em;flex-shrink:0}.smart-recs-mood__button{min-width:8.8em;padding:.88em 1.35em;border-radius:.72em;background:rgba(238,243,239,.15);border:.12em solid rgba(255,255,255,.26);font-size:1.05em;text-align:center;box-sizing:border-box}.smart-recs-mood__button.focus{background:#eef3ef;color:#101612;border-color:#eef3ef;transform:scale(1.045)}',
+            '.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.58);font-size:.9em}.smart-recs-mood__status.hide{display:none}',
+            '@media(max-width:700px){.smart-recs-mood__top{left:1.4em;right:1.4em;top:1.3em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__overview{display:none}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
+        ].join('');
+        document.head.appendChild(style);
+    }
+
+    function moodStatusText() {
+        var mood = readMoodStore();
+        if (mood.draft && asArray(mood.draft.records).length < MOOD_MINIMUM) {
+            return 'Продолжить: ' + mood.draft.records.length + ' из ' + MOOD_MINIMUM;
+        }
+        if (mood.active) return 'Обновить настроение · действует 6 часов';
+        return '10–60 коротких трейлеров';
+    }
+
+    function MoodEntryCard(data) {
+        var html;
+        var card = {};
+        card.create = function () {
+            html = $('<div class="smart-recs-mood-entry selector">' +
+                '<svg class="smart-recs-mood-entry__icon" viewBox="0 0 64 64"><path fill="currentColor" d="M32 6a26 26 0 1 0 0 52 26 26 0 0 0 0-52Zm-9 15 22 11-22 11V21Z"/></svg>' +
+                '<div class="smart-recs-mood-entry__text"><div class="smart-recs-mood-entry__title">Настроить настроение</div><div class="smart-recs-mood-entry__subtitle"></div></div></div>');
+            html.find('.smart-recs-mood-entry__subtitle').text(moodStatusText());
+            html.on('hover:focus hover:hover hover:touch', function () {
+                if (card.onFocus) card.onFocus(html[0], data);
+            });
+            html.on('hover:enter', function () {
+                if (card.onEnter) card.onEnter(html[0], data);
+            });
+        };
+        card.render = function (js) { return js ? html[0] : html; };
+        card.destroy = function () { if (html) html.remove(); };
+        return card;
+    }
+
+    function imageForCard(card) {
+        var path = card && (card.backdrop_path || card.poster_path);
+        if (!path || !Lampa.TMDB || !Lampa.TMDB.image) return '';
+        return Lampa.TMDB.image('t/p/w1280' + path);
+    }
+
+    function newMoodSession() {
+        var now = Date.now();
+        return {
+            id: simpleHash(String(now) + ':' + Math.random()),
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: now + MOOD_TTL,
+            records: [],
+            presented: []
+        };
+    }
+
+    function MoodSession(cards) {
+        var self = this;
+        var store = readMoodStore();
+        var session = store.draft || newMoodSession();
+        var html = $('<div class="smart-recs-mood">' +
+            '<div class="smart-recs-mood__media"></div><div class="smart-recs-mood__shade"></div>' +
+            '<div class="smart-recs-mood__top"><div class="smart-recs-mood__counter"></div><div class="smart-recs-mood__track"><span></span></div></div>' +
+            '<div class="smart-recs-mood__status">Загружаем трейлер…</div>' +
+            '<div class="smart-recs-mood__bottom"><div class="smart-recs-mood__info"><div class="smart-recs-mood__eyebrow"></div><div class="smart-recs-mood__title"></div><div class="smart-recs-mood__overview"></div></div>' +
+            '<div class="smart-recs-mood__actions"><div class="smart-recs-mood__button smart-recs-mood__button--watch selector">Смотреть</div><div class="smart-recs-mood__button smart-recs-mood__button--next selector">Дальше</div></div></div></div>');
+        var media = html.find('.smart-recs-mood__media');
+        var watchButton = html.find('.smart-recs-mood__button--watch');
+        var nextButton = html.find('.smart-recs-mood__button--next');
+        var current = null;
+        var currentVideo = null;
+        var frame = null;
+        var frameWindow = null;
+        var bridgeId = '';
+        var clipStart = 0;
+        var watchedSeconds = 0;
+        var shownAt = 0;
+        var playbackTimer = null;
+        var serial = 0;
+        var changing = false;
+        var destroyed = false;
+        var videoCache = {};
+        var shown = {};
+
+        asArray(session.records).forEach(function (record) { shown[cardKey(record.card)] = true; });
+        asArray(session.presented).forEach(function (key) { shown[key] = true; });
+
+        function count() { return asArray(session.records).length; }
+
+        function updateProgress() {
+            var amount = count();
+            var target = amount < MOOD_MINIMUM ? MOOD_MINIMUM : MOOD_MAXIMUM;
+            html.find('.smart-recs-mood__counter').text(amount < MOOD_MINIMUM ? amount + ' / ' + MOOD_MINIMUM + ' · минимум' : amount + ' / ' + MOOD_MAXIMUM + ' · настроение готово');
+            var actionProgress = currentVideo ? clamp(watchedSeconds / PREVIEW_SECONDS, 0, 1) : 0;
+            var total = clamp((amount + actionProgress) / target * 100, 0, 100);
+            html.find('.smart-recs-mood__track span').css('width', total + '%');
+        }
+
+        function saveSession(complete) {
+            session.updatedAt = Date.now();
+            session.expiresAt = Date.now() + MOOD_TTL;
+            store.draft = complete ? null : jsonClone(session);
+            if (count() >= MOOD_MINIMUM) store.active = jsonClone(session);
+            storageSet('mood', store);
+        }
+
+        function post(type, data) {
+            try {
+                if (frameWindow) frameWindow.postMessage({ bridgeId: bridgeId, type: type, data: data || {} }, '*');
+            } catch (error) {}
+        }
+
+        function destroyFrame() {
+            clearTimeout(playbackTimer);
+            if (frame) post('destroy');
+            if (frame) frame.remove();
+            frame = null;
+            frameWindow = null;
+            bridgeId = '';
+            currentVideo = null;
+        }
+
+        function loadVideo(card, callback) {
+            var key = cardKey(card);
+            if (Object.prototype.hasOwnProperty.call(videoCache, key)) return callback(videoCache[key]);
+            tmdbVideos(card, function (videos) {
+                var language = 'ru';
+                try { language = Lampa.Storage.field('tmdb_lang') || 'ru'; } catch (error) {}
+                videoCache[key] = selectPreviewVideo(videos, language);
+                callback(videoCache[key]);
+            });
+        }
+
+        function createFrame(video) {
+            var root = Lampa.Manifest && Lampa.Manifest.github_lampa || '';
+            bridgeId = 'smart_recs_' + Math.random().toString(36).slice(2);
+            clipStart = video.type === 'Teaser' ? 0 : 8;
+            frame = document.createElement('iframe');
+            frame.src = root.replace(/\/?$/, '/') + 'youtube.html?bridgeId=' + encodeURIComponent(bridgeId) + '&videoId=' + encodeURIComponent(video.key) + '&autoplay=1&controls=0&mute=0&start=' + clipStart;
+            frame.setAttribute('allow', 'autoplay; encrypted-media; picture-in-picture');
+            frame.setAttribute('allowfullscreen', 'true');
+            frame.onload = function () { frameWindow = frame.contentWindow; };
+            media.empty().append(frame);
+            frameWindow = frame.contentWindow;
+            playbackTimer = setTimeout(function () {
+                if (frame && !frame.classList.contains('ready')) {
+                    html.find('.smart-recs-mood__status').removeClass('hide').text('Нажмите ← или →, чтобы запустить трейлер');
+                }
+            }, 7000);
+        }
+
+        function previewNext() {
+            var ranked = rankMoodCards(cards, session.records, shown);
+            if (ranked.length) loadVideo(ranked[0], function () {});
+        }
+
+        function showNext() {
+            if (destroyed) return;
+            changing = false;
+            destroyFrame();
+            var ranked = rankMoodCards(cards, session.records, shown);
+            if (!ranked.length) return self.finish(true);
+            current = ranked[0];
+            shown[cardKey(current)] = true;
+            session.presented = asArray(session.presented);
+            session.presented.push(cardKey(current));
+            session.presented = session.presented.slice(-MOOD_MAXIMUM * 2);
+            saveSession(false);
+            watchedSeconds = 0;
+            shownAt = Date.now();
+            serial += 1;
+            var requestSerial = serial;
+            var backdrop = imageForCard(current);
+            media.empty().css('background-image', backdrop ? 'url("' + backdrop.replace(/"/g, '%22') + '")' : 'none');
+            html.find('.smart-recs-mood__title').text(titleOf(current));
+            html.find('.smart-recs-mood__overview').text(current.overview || 'Оцените по трейлеру, постеру и описанию.');
+            html.find('.smart-recs-mood__eyebrow').text((mediaType(current) === 'tv' ? 'Сериал' : 'Фильм') + (yearOf(current) ? ' · ' + yearOf(current) : ''));
+            html.find('.smart-recs-mood__status').removeClass('hide').text('Загружаем трейлер…');
+            updateProgress();
+            loadVideo(current, function (video) {
+                if (destroyed || requestSerial !== serial) return;
+                currentVideo = video;
+                if (video) createFrame(video);
+                else html.find('.smart-recs-mood__status').removeClass('hide').text('Трейлер не найден · оцените карточку');
+                previewNext();
+            });
+        }
+
+        function actualWatched() {
+            if (currentVideo) return watchedSeconds;
+            return Math.max(0, (Date.now() - shownAt) / 1000);
+        }
+
+        function record(action) {
+            var watched = actualWatched();
+            session.records = asArray(session.records);
+            session.records.push({
+                card: compactCard(current),
+                action: action,
+                watched: Math.round(watched * 10) / 10,
+                weight: moodSignalWeight(action, watched, Boolean(currentVideo)),
+                updatedAt: Date.now()
+            });
+            saveSession(false);
+            if (count() === MOOD_MINIMUM) clearCache();
+            updateProgress();
+        }
+
+        function act(action) {
+            if (changing || !current) return;
+            changing = true;
+            record(action);
+            if (action === 'watch') {
+                var card = current;
+                self.destroy();
+                Lampa.Activity.push({
+                    url: '', component: 'full', id: card.id, method: mediaType(card), card: card, source: 'tmdb'
+                });
+                return;
+            }
+            if (count() >= MOOD_MAXIMUM) return self.finish(true);
+            showNext();
+        }
+
+        function onMessage(event) {
+            if (!event.data || event.data.bridgeId !== bridgeId || destroyed) return;
+            var type = event.data.type;
+            var data = event.data.data || {};
+            if (type === 'bridgeReady' || type === 'ready') {
+                frameWindow = frame && frame.contentWindow;
+                post('init', { volume: 100 });
+                post('play');
+            } else if (type === 'stateChange' && data.state === 1) {
+                clearTimeout(playbackTimer);
+                if (frame) frame.classList.add('ready');
+                html.find('.smart-recs-mood__status').addClass('hide');
+            } else if (type === 'time') {
+                watchedSeconds = Math.max(watchedSeconds, asNumber(data.currentTime, clipStart) - clipStart);
+                updateProgress();
+                if (watchedSeconds >= PREVIEW_SECONDS) act('complete');
+            } else if (type === 'stateChange' && data.state === 0) {
+                act('complete');
+            } else if (type === 'error') {
+                destroyFrame();
+                html.find('.smart-recs-mood__status').removeClass('hide').text('Трейлер недоступен · оцените карточку');
+            }
+            if (Lampa.Screensaver && Lampa.Screensaver.resetTimer) Lampa.Screensaver.resetTimer();
+        }
+
+        this.start = function () {
+            $('body').addClass('ambience--enable').append(html);
+            if (Lampa.Background && Lampa.Background.theme) Lampa.Background.theme('black');
+            window.addEventListener('message', onMessage);
+            watchButton.on('hover:enter', function () { act('watch'); });
+            nextButton.on('hover:enter', function () { act('next'); });
+            Lampa.Controller.add('smart_recs_mood', {
+                link: self,
+                toggle: function () {
+                    Lampa.Controller.collectionSet(html);
+                    Lampa.Controller.collectionFocus(nextButton, html);
+                },
+                left: function () { post('play'); Lampa.Controller.focus(watchButton[0]); },
+                right: function () { post('play'); Lampa.Controller.focus(nextButton[0]); },
+                back: function () { self.finish(false); }
+            });
+            Lampa.Controller.toggle('smart_recs_mood');
+            showNext();
+        };
+
+        this.finish = function (automatic) {
+            if (destroyed) return;
+            var ready = count() >= MOOD_MINIMUM;
+            saveSession(ready);
+            if (ready) clearCache();
+            self.destroy();
+            if (ready) {
+                notify('Настроение учтено · ' + count() + ' оценок');
+                Lampa.Activity.replace({ force: true });
+            } else {
+                notify('Черновик сохранён · ещё ' + (MOOD_MINIMUM - count()) + '');
+                Lampa.Controller.toggle('content');
+            }
+        };
+
+        this.destroy = function () {
+            if (destroyed) return;
+            destroyed = true;
+            serial += 1;
+            destroyFrame();
+            window.removeEventListener('message', onMessage);
+            html.remove();
+            $('body').removeClass('ambience--enable');
+            if (Lampa.Background && Lampa.Background.theme) Lampa.Background.theme('reset');
+            runtime.mood = null;
+        };
+    }
+
+    function startMoodCalibration() {
+        if (runtime.mood || runtime.moodLoading) return;
+        runtime.moodLoading = true;
+        notify('Готовим короткие трейлеры…');
+        var profile = buildRuntimeProfile();
+        getRecommendations(false, function (payload) {
+            prepareMoodCandidates(payload, profile, function (cards) {
+                runtime.moodLoading = false;
+                if (!cards.length) return notify('Не удалось собрать фильмы для настройки', true);
+                runtime.mood = new MoodSession(cards);
+                runtime.mood.start();
+            });
+        });
+    }
+
     function refresh() {
         clearCache();
         getRecommendations(true, function (payload) {
@@ -763,7 +1296,18 @@
             getRecommendations(object.force === true, function (payload) {
                 if (!alive) return;
                 if (!payload.lines.length) self.empty();
-                else self.build(jsonClone(payload.lines));
+                else {
+                    var lines = jsonClone(payload.lines);
+                    lines.unshift({
+                        title: 'Текущее настроение',
+                        results: [{ id: 'mood-calibration', media_type: 'movie' }],
+                        nomore: true,
+                        line_type: 'smart-recs-mood',
+                        cardClass: MoodEntryCard,
+                        card_events: { onEnter: startMoodCalibration }
+                    });
+                    self.build(lines);
+                }
             });
             return this.render();
         };
@@ -779,7 +1323,7 @@
     function openRecommendations(force) {
         Lampa.Activity.push({
             url: '',
-            title: 'Умные рекомендации',
+            title: 'Рекомендации',
             component: COMPONENT,
             source: 'tmdb',
             page: 1,
@@ -799,7 +1343,7 @@
         if (!runtime.menuButton) {
             runtime.menuButton = $('<li class="menu__item selector ' + MENU_CLASS + '">' +
                 '<div class="menu__ico">' + menuIcon() + '</div>' +
-                '<div class="menu__text">Для вас</div></li>');
+                '<div class="menu__text">Рекомендации</div></li>');
             runtime.menuButton.on('hover:enter', function () { openRecommendations(false); });
         }
         if (!enabled) return runtime.menuButton.detach();
@@ -813,14 +1357,14 @@
     function registerSettings() {
         Lampa.SettingsApi.addComponent({
             component: COMPONENT,
-            name: 'Умные рекомендации',
+            name: 'Рекомендации',
             icon: menuIcon()
         });
 
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: { name: PREFIX + 'enabled', type: 'trigger', default: true },
-            field: { name: 'Включить плагин', description: 'Показывать раздел «Для вас» в боковом меню.' },
+            field: { name: 'Включить плагин', description: 'Показывать раздел «Рекомендации» в боковом меню.' },
             onChange: updateMenu
         });
         Lampa.SettingsApi.addParam({
@@ -867,6 +1411,12 @@
             param: { name: PREFIX + 'clear_feedback', type: 'button' },
             field: { name: 'Очистить «больше/меньше похожего»', description: 'История и обычные закладки Lampa не удаляются.' },
             onChange: clearFeedback
+        });
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT,
+            param: { name: PREFIX + 'clear_mood', type: 'button' },
+            field: { name: 'Сбросить текущее настроение', description: 'Постоянная история и отметки Lampa сохранятся.' },
+            onChange: clearMood
         });
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
@@ -998,6 +1548,7 @@
     function init() {
         if (runtime.initialized) return;
         runtime.initialized = true;
+        addStyles();
         Lampa.Component.add(COMPONENT, RecommendationsComponent);
         registerSettings();
         registerFeedbackMenus();
@@ -1015,8 +1566,10 @@
     window.LampaSmartRecs = {
         version: VERSION,
         open: openRecommendations,
+        calibrate: startMoodCalibration,
         refresh: refresh,
         clearFeedback: clearFeedback,
+        clearMood: clearMood,
         registerProtectedFeature: registerProtectedFeature,
         runProtectedFeature: runProtectedFeature
     };

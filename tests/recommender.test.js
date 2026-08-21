@@ -107,3 +107,32 @@ test('diversity selector does not mutate its input', () => {
   assert.equal(selected.length, 2);
   assert.deepEqual(entries, original);
 });
+
+test('chooses an official trailer in the current language', () => {
+  const selected = core.selectPreviewVideo([
+    { key: 'clip', site: 'YouTube', type: 'Clip', iso_639_1: 'ru', official: true },
+    { key: 'english', site: 'YouTube', type: 'Trailer', iso_639_1: 'en', official: true },
+    { key: 'russian', site: 'YouTube', type: 'Trailer', iso_639_1: 'ru', official: true },
+    { key: 'vimeo', site: 'Vimeo', type: 'Trailer', iso_639_1: 'ru', official: true },
+  ], 'ru');
+
+  assert.equal(selected.key, 'russian');
+});
+
+test('mood signals distinguish a quick skip from a watched preview', () => {
+  assert.ok(core.moodSignalWeight('next', 2, true) < 0);
+  assert.ok(core.moodSignalWeight('next', 25, true) > 0);
+  assert.ok(core.moodSignalWeight('complete', 30, true) > 0);
+  assert.ok(core.moodSignalWeight('watch', 3, true) > core.moodSignalWeight('complete', 30, true));
+});
+
+test('mood reranking reacts immediately to the last choices', () => {
+  const drama = movie(21, [18]);
+  const scienceFiction = movie(22, [878]);
+  const ranked = core.rankMoodCards([drama, scienceFiction], [
+    { card: movie(1, [878]), weight: 9 },
+    { card: movie(2, [18]), weight: -4 },
+  ], {});
+
+  assert.equal(ranked[0].id, scienceFiction.id);
+});

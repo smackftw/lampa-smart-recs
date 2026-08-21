@@ -1,0 +1,15 @@
+{
+  "name": "lampa-smart-recs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Privacy-first, zero-key personal recommendations for Lampa",
+  "scripts": {
+    "check": "node --check smart-recs.js",
+    "test": "npm run check && node --test",
+    "test:integration": "node scripts/integration-lampa.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

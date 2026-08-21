@@ -104,6 +104,8 @@ test('builds positive and negative taste signals only from plugin feedback', () 
   assert.ok(profile.genreWeights.movie[27] < 0);
   assert.equal(profile.seen['movie:1'], true);
   assert.equal(profile.seen['movie:2'], true);
+  assert.equal(profile.disliked['movie:1'], undefined);
+  assert.equal(profile.disliked['movie:2'], true);
 });
 
 test('negative plugin feedback creates a negative taste signal', () => {
@@ -117,6 +119,13 @@ test('negative plugin feedback creates a negative taste signal', () => {
 
   assert.ok(profile.negative.some((signal) => signal.key === 'movie:5'));
   assert.ok(profile.genreWeights.movie[35] < 0);
+});
+
+test('treats only 90 percent or more as completed playback', () => {
+  assert.equal(core.timelineShowsCompleted({ percent: 89 }), false);
+  assert.equal(core.timelineShowsCompleted({ percent: 90 }), true);
+  assert.equal(core.timelineShowsCompleted([{ view: { percent: 20 } }, { view: { percent: 95 } }]), true);
+  assert.equal(core.timelineShowsCompleted([{ view: { percent: 20 } }]), false);
 });
 
 test('keeps content-specific taste alongside the broad profile', () => {

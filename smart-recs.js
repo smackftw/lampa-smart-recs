@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.4.1
+ * Lampa Smart Recs v0.4.2
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.4.1';
+    var VERSION = '0.4.2';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
@@ -342,6 +342,7 @@
     function buildProfileFromFeedback(feedback) {
         var signalMap = {};
         var seen = {};
+        var disliked = {};
         var genreWeights = { movie: {}, tv: {} };
         var kindGenreWeights = { movie: {}, tv: {}, anime: {}, cartoon: {} };
         var kindSignalCounts = { movie: 0, tv: 0, anime: 0, cartoon: 0 };
@@ -409,6 +410,7 @@
 
         var positive = signals.filter(function (signal) { return signal.weight > 0.5; });
         var negative = signals.filter(function (signal) { return signal.weight < -0.5; });
+        negative.forEach(function (signal) { disliked[signal.key] = true; });
         var signatureParts = signals.map(function (signal) {
             return signal.key + ':' + signal.weight.toFixed(2) + ':' + signal.origins.join(',');
         });
@@ -418,6 +420,7 @@
             positive: positive,
             negative: negative,
             seen: seen,
+            disliked: disliked,
             genreWeights: genreWeights,
             kindGenreWeights: kindGenreWeights,
             kindSignalCounts: kindSignalCounts,
@@ -536,6 +539,7 @@
         uniqueRecommendationCards: uniqueRecommendationCards,
         simpleHash: simpleHash,
         selectPreviewVideo: selectPreviewVideo,
+        timelineShowsCompleted: timelineShowsCompleted,
         moodSignalWeight: moodSignalWeight,
         buildMoodTaste: buildMoodTaste,
         moodCardScore: moodCardScore,
@@ -598,9 +602,16 @@
         var mood = storageGet('mood', emptyMoodStore());
         var changed = false;
         if (!mood || mood.schema !== MOOD_SCHEMA) mood = emptyMoodStore();
-        if (mood.active && (!mood.active.expiresAt || mood.active.expiresAt <= Date.now())) {
-            mood.active = null;
-            changed = true;
+        if (mood.active) {
+            var extendedExpiry = mood.active.updatedAt ? mood.active.updatedAt + MOOD_TTL : 0;
+            if (extendedExpiry && (!mood.active.expiresAt || mood.active.expiresAt < extendedExpiry)) {
+                mood.active.expiresAt = extendedExpiry;
+                changed = true;
+            }
+            if (!mood.active.expiresAt || mood.active.expiresAt <= Date.now()) {
+                mood.active = null;
+                changed = true;
+            }
         }
         if (mood.draft && (!mood.draft.updatedAt || Date.now() - mood.draft.updatedAt > MOOD_DRAFT_TTL)) {
             mood.draft = null;
@@ -761,6 +772,24 @@
         } catch (error) {
             console.warn('[SmartRecs] TMDB request failed:', method, error);
             finish(null);
+        }
+    }
+
+    function timelineShowsCompleted(value) {
+        if (isArray(value)) {
+            return value.some(function (episode) {
+                return asNumber(episode && episode.view && episode.view.percent, 0) >= 90;
+            });
+        }
+        return asNumber(value && value.percent, 0) >= 90;
+    }
+
+    function cardWasWatched(card) {
+        if (!Lampa.Timeline || typeof Lampa.Timeline.watched !== 'function') return false;
+        try {
+            return timelineShowsCompleted(Lampa.Timeline.watched(card, true));
+        } catch (error) {
+            return false;
         }
     }
 
@@ -1012,7 +1041,7 @@
 
     function finalizeCandidates(profile, pool, excluded, limit, batch) {
         var mode = setting('mode', 'balanced');
-        var hideSeen = boolSetting('hide_seen', true);
+        var hideWatched = boolSetting('hide_seen', true);
         excluded = excluded || {};
         var entries = Object.keys(pool.items).map(function (key) {
             var entry = pool.items[key];
@@ -1021,7 +1050,8 @@
         }).filter(function (entry) {
             if (!entry.card.poster_path && !entry.card.backdrop_path) return false;
             if (!matchesFilters(entry.card, profile.filters)) return false;
-            if (hideSeen && profile.seen[entry.key]) return false;
+            if (profile.disliked[entry.key]) return false;
+            if (hideWatched && cardWasWatched(entry.card)) return false;
             if (excluded[entry.key]) return false;
             return true;
         }).sort(function (left, right) {
@@ -1070,10 +1100,21 @@
         generateRecommendationBatch(profile, 1, {}, INITIAL_RECOMMENDATION_LIMIT, callback);
     }
 
+    function filterWatchedFromPayload(payload) {
+        var result = jsonClone(payload) || {};
+        if (!boolSetting('hide_seen', true)) return result;
+        asArray(result.lines).forEach(function (line) {
+            line.results = asArray(line && line.results).filter(function (card) {
+                return !cardWasWatched(card);
+            });
+        });
+        return result;
+    }
+
     function getRecommendations(force, callback) {
         var profile = buildRuntimeProfile();
         var cached = force ? null : readCache(profile);
-        if (cached) return setTimeout(function () { callback(jsonClone(cached)); }, 0);
+        if (cached) return setTimeout(function () { callback(filterWatchedFromPayload(cached)); }, 0);
 
         if (runtime.inFlight && runtime.inFlight.signature === profile.signature) {
             runtime.inFlight.callbacks.push(callback);
@@ -1088,7 +1129,7 @@
                 saveCache(profile, payload);
                 runtime.inFlight = null;
             }
-            waiting.forEach(function (done) { done(jsonClone(payload)); });
+            waiting.forEach(function (done) { done(filterWatchedFromPayload(payload)); });
         });
     }
 
@@ -1147,7 +1188,7 @@
             asArray(items).forEach(function (card) {
                 var safe = compactCard(card, type);
                 var key = cardKey(safe);
-                if (!key || used[key] || safe.adult || (!safe.poster_path && !safe.backdrop_path) || profile.seen[key] || !matchesFilters(safe, filters)) return;
+                if (!key || used[key] || safe.adult || (!safe.poster_path && !safe.backdrop_path) || profile.seen[key] || profile.disliked[key] || (boolSetting('hide_seen', true) && cardWasWatched(safe)) || !matchesFilters(safe, filters)) return;
                 safe.smart_recs_score = 45;
                 used[key] = true;
                 cards.push(safe);
@@ -2029,7 +2070,7 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: { name: PREFIX + 'hide_seen', type: 'trigger', default: true },
-            field: { name: 'Скрывать уже оценённое' },
+            field: { name: 'Скрывать просмотренное', description: 'Убирать контент, просмотренный в Lampa на 90% или больше.' },
             onChange: clearCache
         });
         Lampa.SettingsApi.addParam({

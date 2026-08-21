@@ -15,6 +15,7 @@ test('boots against the current public Lampa plugin surface', async () => {
   const timers = [];
   const tmdbRequests = [];
   const renderedCards = [];
+  const watchedIds = new Set([12]);
 
   function element(className = '') {
     const classes = new Set(className.split(/\s+/).filter(Boolean));
@@ -77,7 +78,13 @@ test('boots against the current public Lampa plugin surface', async () => {
       field(name) { return storage.has(name) ? storage.get(name) : settings.get(name); },
     },
     Favorite: { get() { throw new Error('Favorite must not be read'); }, listener: listener() },
-    Timeline: { watched() { throw new Error('Timeline must not be read'); }, listener: listener() },
+    Timeline: {
+      watched(card) {
+        if (watchedIds.has(card.id)) return card.media_type === 'tv' ? [{ view: { percent: 95 } }] : { percent: 95 };
+        return card.media_type === 'tv' ? [] : { percent: 0 };
+      },
+      listener: listener(),
+    },
     Api: {
       sources: {
         tmdb: {
@@ -171,17 +178,54 @@ test('boots against the current public Lampa plugin surface', async () => {
     setTimeout(fn) { timers.push(fn); return timers.length; },
   };
 
+  storage.set('lampa_smart_recs_feedback', {
+    schema: 1,
+    items: {
+      'movie:11': {
+        value: 1,
+        card: { id: 11, media_type: 'movie', title: 'Liked candidate', genre_ids: [18], poster_path: '/poster.jpg' },
+      },
+      'movie:21': {
+        value: -1,
+        card: { id: 21, media_type: 'movie', title: 'Disliked candidate', genre_ids: [18], poster_path: '/poster.jpg' },
+      },
+    },
+  });
+
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.4.1');
+  assert.equal(context.window.LampaSmartRecs.version, '0.4.2');
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);
   assert.ok(storage.has('lampa_smart_recs_cache'));
   assert.equal(storage.get('lampa_smart_recs_cache').payload.lines.length, 1);
   assert.equal(storage.get('lampa_smart_recs_cache').payload.lines[0].title, 'Для вас');
+  assert.ok(storage.get('lampa_smart_recs_cache').payload.lines[0].results.some((card) => card.id === 11));
+  assert.equal(storage.get('lampa_smart_recs_cache').payload.lines[0].results.some((card) => card.id === 21), false);
+  assert.equal(storage.get('lampa_smart_recs_cache').payload.lines[0].results.some((card) => card.id === 12), false);
 
+  watchedIds.add(11);
+  let cachedHomeRow;
+  rows[0].call()((payload) => { cachedHomeRow = payload; });
+  timers.splice(0).forEach((fn) => fn());
+  assert.equal(cachedHomeRow.results.some((card) => card.id === 11), false);
+  watchedIds.delete(11);
+
+  const moodUpdatedAt = Date.now() - 60_000;
+  storage.set('lampa_smart_recs_mood', {
+    schema: 1,
+    active: { updatedAt: moodUpdatedAt, expiresAt: moodUpdatedAt + 6 * 60 * 60 * 1000, records: [] },
+    draft: null,
+  });
+  storage.set('lampa_smart_recs_filters', {
+    schema: 1,
+    configured: true,
+    types: { movie: true, tv: true, anime: true, cartoon: true },
+    genres: {},
+    rating: 0,
+  });
   const recommendationComponent = components.get('lampa_smart_recs')({ force: false });
   recommendationComponent.activity = { loader() {}, toggle() {}, canRefresh() { return false; } };
   recommendationComponent.create();
@@ -191,11 +235,13 @@ test('boots against the current public Lampa plugin surface', async () => {
   lastInitialCard.onFocus(lastInitialCard.render(true), lastInitialCard.data);
   assert.ok(renderedCards.length > initialFeedLength);
   assert.ok(tmdbRequests.some((request) => request.page >= 3));
+  assert.equal(storage.get('lampa_smart_recs_mood').active.expiresAt, moodUpdatedAt + 48 * 60 * 60 * 1000);
 
   const moodReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_mood');
   const fullReset = settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_clear_all');
   assert.equal(moodReset.field.name, 'Сбросить текущее настроение');
   assert.equal(fullReset.field.name, 'Начать рекомендации с нуля');
+  assert.equal(settingDefinitions.find((item) => item.param.name === 'lampa_smart_recs_hide_seen').field.name, 'Скрывать просмотренное');
   assert.equal(settingDefinitions.some((item) => item.param.name === 'lampa_smart_recs_clear_feedback'), false);
 
   storage.set('lampa_smart_recs_feedback', { schema: 1, items: { movie: { value: 1 } } });

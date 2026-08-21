@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.4.0
+ * Lampa Smart Recs v0.4.1
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,14 +9,14 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.4.0';
+    var VERSION = '0.4.1';
     var CACHE_SCHEMA = 1;
     var FEEDBACK_SCHEMA = 1;
     var MOOD_SCHEMA = 1;
     var FILTER_SCHEMA = 1;
     var MOOD_MINIMUM = 10;
     var MOOD_MAXIMUM = 60;
-    var MOOD_TTL = 6 * 60 * 60 * 1000;
+    var MOOD_TTL = 48 * 60 * 60 * 1000;
     var MOOD_DRAFT_TTL = 24 * 60 * 60 * 1000;
     var PREVIEW_SECONDS = 30;
     var INITIAL_RECOMMENDATION_LIMIT = 40;
@@ -1235,7 +1235,7 @@
         if (mood.draft && asArray(mood.draft.records).length < MOOD_MINIMUM) {
             return 'Продолжить: ' + mood.draft.records.length + ' из ' + MOOD_MINIMUM;
         }
-        if (mood.active) return 'Обновить выбор · действует 6 часов';
+        if (mood.active) return 'Обновить выбор · действует 48 часов';
         return '10–60 коротких трейлеров';
     }
 

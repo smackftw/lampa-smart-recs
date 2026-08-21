@@ -92,7 +92,7 @@ test('boots against the current public Lampa plugin surface', async () => {
     Favorite: { get() { throw new Error('Favorite must not be read'); }, listener: listener() },
     Timeline: {
       watched(card) {
-        if (watchedIds.has(card.id)) return card.media_type === 'tv' ? [{ view: { percent: 95 } }] : { percent: 95 };
+        if (watchedIds.has(card.id)) return card.media_type === 'tv' ? [{ ep: 1, view: { percent: 95 } }, { ep: 2, view: { percent: 95 } }] : { percent: 95 };
         return card.media_type === 'tv' ? [] : { percent: 0 };
       },
       listener: listener(),
@@ -207,7 +207,8 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.4.3');
+  assert.equal(context.window.LampaSmartRecs.version, '0.5.0');
+  assert.equal(storage.get('lampa_smart_recs_feedback').schema, 2);
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);

@@ -121,11 +121,12 @@ test('negative plugin feedback creates a negative taste signal', () => {
   assert.ok(profile.genreWeights.movie[35] < 0);
 });
 
-test('treats only 90 percent or more as completed playback', () => {
+test('treats a movie or two distinct series episodes as completed playback', () => {
   assert.equal(core.timelineShowsCompleted({ percent: 89 }), false);
   assert.equal(core.timelineShowsCompleted({ percent: 90 }), true);
-  assert.equal(core.timelineShowsCompleted([{ view: { percent: 20 } }, { view: { percent: 95 } }]), true);
-  assert.equal(core.timelineShowsCompleted([{ view: { percent: 20 } }]), false);
+  assert.equal(core.timelineShowsCompleted([{ ep: 1, view: { percent: 95 } }]), false);
+  assert.equal(core.timelineShowsCompleted([{ ep: 1, view: { percent: 95 } }, { ep: 2, view: { percent: 90 } }]), true);
+  assert.equal(core.timelineShowsCompleted([{ ep: 1, view: { percent: 95 } }, { ep: 1, view: { percent: 95 } }]), false);
 });
 
 test('keeps content-specific taste alongside the broad profile', () => {
@@ -224,11 +225,44 @@ test('uses ordered trailer language fallbacks', () => {
 });
 
 test('mood signals distinguish a quick skip from a watched preview', () => {
-  assert.ok(core.moodSignalWeight('next', 2, true) < 0);
-  assert.ok(core.moodSignalWeight('next', 25, true) < 0);
+  assert.ok(core.moodSignalWeight('next', 2, true) < core.moodSignalWeight('next', 25, true));
   assert.ok(core.moodSignalWeight('complete', 30, true) > 0);
   assert.ok(core.moodSignalWeight('like', 1, true) > 0);
   assert.ok(core.moodSignalWeight('watch', 3, true) > core.moodSignalWeight('complete', 30, true));
+});
+
+test('reserves only a quarter of each feed batch for exact likes', () => {
+  assert.equal(core.likedQuota(40, 1), 10);
+  assert.equal(core.likedQuota(20, 2), 5);
+  assert.equal(core.likedQuota(8, 1), 2);
+});
+
+test('guarantees exploration without letting it dominate precise mode', () => {
+  assert.equal(core.explorationQuota(40, 'precise'), 2);
+  assert.equal(core.explorationQuota(40, 'balanced'), 6);
+  assert.equal(core.explorationQuota(40, 'explore'), 12);
+});
+
+test('movie genome distinguishes candidates inside the same broad genre', () => {
+  const liked = movie(31, [18]);
+  const profile = core.buildProfileFromFeedback({
+    schema: 2,
+    items: {
+      liked: {
+        value: 1,
+        tasteWeight: 8,
+        updatedAt: Date.now(),
+        card: liked,
+        genome: { features: [{ key: 'director:77', weight: 1.25 }, { key: 'keyword:99', weight: 1.15 }] },
+      },
+    },
+  });
+  const matching = movie(32, [18]);
+  matching.smart_recs_genome = { features: [{ key: 'director:77', weight: 1.25 }] };
+  const other = movie(33, [18]);
+  other.smart_recs_genome = { features: [{ key: 'director:88', weight: 1.25 }] };
+
+  assert.ok(core.affinityScore(matching, profile) > core.affinityScore(other, profile));
 });
 
 test('mood reranking reacts immediately to the last choices', () => {

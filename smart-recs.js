@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.4.3
+ * Lampa Smart Recs v0.5.0
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,11 +9,13 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.4.3';
-    var CACHE_SCHEMA = 1;
-    var FEEDBACK_SCHEMA = 1;
+    var VERSION = '0.5.0';
+    var CACHE_SCHEMA = 2;
+    var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
     var FILTER_SCHEMA = 1;
+    var GENOME_SCHEMA = 1;
+    var VIDEO_CACHE_SCHEMA = 1;
     var MOOD_MINIMUM = 10;
     var MOOD_MAXIMUM = 60;
     var MOOD_TTL = 48 * 60 * 60 * 1000;
@@ -23,6 +25,13 @@
     var MORE_RECOMMENDATION_LIMIT = 20;
     var LOAD_MORE_THRESHOLD = 8;
     var EMPTY_BATCH_RETRIES = 3;
+    var NETWORK_GUARD_TIMEOUT = 12000;
+    var GENOME_TTL = 45 * 24 * 60 * 60 * 1000;
+    var GENOME_FETCH_LIMIT = 28;
+    var VIDEO_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
+    var VIDEO_FAILURE_TTL = 6 * 60 * 60 * 1000;
+    var TASTE_HALF_LIFE = 180 * 24 * 60 * 60 * 1000;
+    var SESSION_TASTE_BLEND = 0.42;
     var PREFIX = 'lampa_smart_recs_';
     var COMPONENT = 'lampa_smart_recs';
     var MENU_CLASS = 'lampa-smart-recs-menu';
@@ -53,6 +62,9 @@
         moodLoading: false,
         filterPromptOpen: false,
         protectedFeatures: {},
+        rerankers: [],
+        likedRotation: 0,
+        genomeFlights: {},
         sessions: {}
     };
 
@@ -285,10 +297,16 @@
         var seconds = Math.max(0, asNumber(watchedSeconds, 0));
         if (action === 'watch' || action === 'like') return 9;
         if (action === 'complete') return hasVideo === false ? 1.5 : 4;
-        if (seconds >= 22) return -1.5;
-        if (seconds >= 12) return -2;
-        if (seconds >= 5) return -3;
-        return hasVideo === false ? -2.5 : -4;
+        if (seconds >= 22) return -1;
+        if (seconds >= 12) return -2.5;
+        if (seconds >= 5) return -5;
+        return hasVideo === false ? -4 : -8;
+    }
+
+    function trailerTasteWeight(action, watchedSeconds, hasVideo) {
+        if (action === 'like' || action === 'watch') return 8;
+        if (action !== 'next') return 0;
+        return moodSignalWeight(action, watchedSeconds, hasVideo);
     }
 
     function buildMoodTaste(records) {
@@ -326,17 +344,46 @@
         });
     }
 
-    function normalizeMap(map) {
-        var maximum = 0;
-        var key;
-        for (key in map) {
-            if (Object.prototype.hasOwnProperty.call(map, key)) maximum = Math.max(maximum, Math.abs(map[key]));
-        }
-        if (!maximum) return map;
-        for (key in map) {
-            if (Object.prototype.hasOwnProperty.call(map, key)) map[key] = map[key] / maximum;
-        }
+    function shrinkMap(map, prior) {
+        prior = Math.max(1, asNumber(prior, 6));
+        Object.keys(map).forEach(function (key) {
+            var value = asNumber(map[key], 0);
+            map[key] = value / (Math.abs(value) + prior);
+        });
         return map;
+    }
+
+    function tasteDecay(updatedAt) {
+        var age = Math.max(0, Date.now() - asNumber(updatedAt, Date.now()));
+        return 0.4 + 0.6 * Math.pow(0.5, age / TASTE_HALF_LIFE);
+    }
+
+    function baselineGenomeFeatures(card) {
+        var features = [];
+        var used = {};
+        function add(key, weight) {
+            if (!key || used[key]) return;
+            used[key] = true;
+            features.push({ key: key, weight: weight });
+        }
+        genreIds(card).forEach(function (id) { add('genre:' + id, 0.85); });
+        if (card && card.original_language) add('language:' + card.original_language, 0.22);
+        asArray(card && card.origin_country).forEach(function (country) { add('country:' + country, 0.28); });
+        var year = yearOf(card);
+        if (year) add('decade:' + Math.floor(year / 10) * 10, 0.32);
+        return features;
+    }
+
+    function genomeFeatures(card, genome) {
+        var combined = baselineGenomeFeatures(card).concat(asArray(genome && genome.features));
+        var result = [];
+        var used = {};
+        combined.forEach(function (feature) {
+            if (!feature || !feature.key || used[feature.key]) return;
+            used[feature.key] = true;
+            result.push({ key: String(feature.key), weight: clamp(asNumber(feature.weight, 0.5), 0.05, 2) });
+        });
+        return result;
     }
 
     function buildProfileFromFeedback(feedback) {
@@ -348,8 +395,11 @@
         var kindSignalCounts = { movie: 0, tv: 0, anime: 0, cartoon: 0 };
         var kindWeights = { movie: 0, tv: 0, anime: 0, cartoon: 0 };
         var languageWeights = {};
+        var genomeWeights = {};
+        var exactLiked = {};
+        var exactDisliked = {};
 
-        function addSignal(card, weight, origin, order) {
+        function addSignal(card, weight, origin, order, updatedAt, genome) {
             var safe = compactCard(card);
             var key = cardKey(safe);
             var signal;
@@ -360,11 +410,15 @@
                 card: safe,
                 weight: 0,
                 origins: [],
-                order: order
+                order: order,
+                updatedAt: updatedAt || 0,
+                genomes: []
             };
             if (genreIds(safe).length > genreIds(signal.card).length) signal.card = safe;
             signal.weight += weight;
             signal.order = Math.min(signal.order, order);
+            signal.updatedAt = Math.max(signal.updatedAt, updatedAt || 0);
+            if (genome) signal.genomes.push(genome);
             signal.origins.push(origin);
             signalMap[key] = signal;
         }
@@ -373,9 +427,14 @@
         Object.keys(feedback).forEach(function (key) {
             var item = feedback[key];
             if (!item || !item.card) return;
-            var weight = typeof item.weight === 'number' ? clamp(item.weight, -10, 10) : item.value > 0 ? 8 : -9;
-            addSignal(item.card, weight, item.origin || (item.value > 0 ? 'manual_more' : 'manual_less'), 0);
+            var rawWeight = typeof item.weight === 'number' ? item.weight : typeof item.tasteWeight === 'number' ? item.tasteWeight : item.value > 0 ? 8 : -9;
+            var weight = clamp(rawWeight, -10, 10) * (item.temporary ? 1 : tasteDecay(item.updatedAt));
+            addSignal(item.card, weight, item.origin || (item.value > 0 ? 'manual_more' : 'manual_less'), item.temporary ? 1 : 0, item.updatedAt, item.genome);
             seen[cardKey(item.card)] = true;
+            if (item.exactState !== 0 && !item.temporary) {
+                if (item.value > 0) exactLiked[cardKey(item.card)] = { card: compactCard(item.card), updatedAt: item.updatedAt || 0 };
+                if (item.value < 0) exactDisliked[cardKey(item.card)] = true;
+            }
         });
 
         var signals = Object.keys(signalMap).map(function (key) {
@@ -393,15 +452,20 @@
             if (signal.card.original_language) {
                 languageWeights[signal.card.original_language] = (languageWeights[signal.card.original_language] || 0) + contribution;
             }
+            var signalGenome = signal.genomes.length ? signal.genomes[signal.genomes.length - 1] : null;
+            genomeFeatures(signal.card, signalGenome).forEach(function (feature) {
+                genomeWeights[feature.key] = (genomeWeights[feature.key] || 0) + contribution * feature.weight;
+            });
             signal.weight = contribution;
             return signal;
         });
 
-        normalizeMap(genreWeights.movie);
-        normalizeMap(genreWeights.tv);
-        CONTENT_TYPES.forEach(function (type) { normalizeMap(kindGenreWeights[type.id]); });
-        normalizeMap(kindWeights);
-        normalizeMap(languageWeights);
+        shrinkMap(genreWeights.movie, 6);
+        shrinkMap(genreWeights.tv, 6);
+        CONTENT_TYPES.forEach(function (type) { shrinkMap(kindGenreWeights[type.id], 6); });
+        shrinkMap(kindWeights, 8);
+        shrinkMap(languageWeights, 8);
+        shrinkMap(genomeWeights, 10);
 
         signals.sort(function (left, right) {
             if (right.weight !== left.weight) return right.weight - left.weight;
@@ -410,7 +474,7 @@
 
         var positive = signals.filter(function (signal) { return signal.weight > 0.5; });
         var negative = signals.filter(function (signal) { return signal.weight < -0.5; });
-        negative.forEach(function (signal) { disliked[signal.key] = true; });
+        Object.keys(exactDisliked).forEach(function (key) { disliked[key] = true; });
         var signatureParts = signals.map(function (signal) {
             return signal.key + ':' + signal.weight.toFixed(2) + ':' + signal.origins.join(',');
         });
@@ -426,6 +490,9 @@
             kindSignalCounts: kindSignalCounts,
             kindWeights: kindWeights,
             languageWeights: languageWeights,
+            genomeWeights: genomeWeights,
+            exactLiked: exactLiked,
+            exactDisliked: exactDisliked,
             signature: simpleHash(signatureParts.sort().join('|')),
             coldStart: positive.length === 0
         };
@@ -462,7 +529,15 @@
         });
         broad /= Math.max(1, Math.min(genres.length, 3));
         specific /= Math.max(1, Math.min(genres.length, 3));
-        return clamp(broad * (1 - confidence * 0.65) + specific * confidence * 0.65, -1, 1);
+        var genreAffinity = clamp(broad * (1 - confidence * 0.65) + specific * confidence * 0.65, -1, 1);
+        var genomeAffinity = 0;
+        var featureTotal = 0;
+        genomeFeatures(card, card && card.smart_recs_genome).forEach(function (feature) {
+            genomeAffinity += (profile.genomeWeights && profile.genomeWeights[feature.key] || 0) * feature.weight;
+            featureTotal += feature.weight;
+        });
+        genomeAffinity = featureTotal ? clamp(genomeAffinity / Math.min(featureTotal, 5), -1, 1) : 0;
+        return clamp(genreAffinity * 0.58 + genomeAffinity * 0.42, -1, 1);
     }
 
     function scoreCandidate(entry, profile, mode, maximumSource) {
@@ -541,6 +616,11 @@
         selectPreviewVideo: selectPreviewVideo,
         timelineShowsCompleted: timelineShowsCompleted,
         moodSignalWeight: moodSignalWeight,
+        trailerTasteWeight: trailerTasteWeight,
+        tasteDecay: tasteDecay,
+        genomeFeatures: genomeFeatures,
+        explorationQuota: explorationQuota,
+        likedQuota: likedQuota,
         buildMoodTaste: buildMoodTaste,
         moodCardScore: moodCardScore,
         rankMoodCards: rankMoodCards
@@ -588,8 +668,19 @@
 
     function readFeedback() {
         var feedback = storageGet('feedback', { schema: FEEDBACK_SCHEMA, items: {} });
-        if (!feedback || feedback.schema !== FEEDBACK_SCHEMA || !feedback.items) {
-            feedback = { schema: FEEDBACK_SCHEMA, items: {} };
+        if (!feedback || !feedback.items) return { schema: FEEDBACK_SCHEMA, items: {} };
+        if (feedback.schema !== FEEDBACK_SCHEMA) {
+            Object.keys(feedback.items).forEach(function (key) {
+                var item = feedback.items[key];
+                if (!item || !item.card) return;
+                item.value = item.value > 0 ? 1 : -1;
+                item.tasteWeight = typeof item.weight === 'number' ? clamp(item.weight, -10, 10) : item.value > 0 ? 8 : -9;
+                item.source = item.source || 'legacy';
+                item.updatedAt = item.updatedAt || Date.now();
+                delete item.weight;
+            });
+            feedback.schema = FEEDBACK_SCHEMA;
+            storageSet('feedback', feedback);
         }
         return feedback;
     }
@@ -656,17 +747,22 @@
         var feedback = readFeedback();
         var combined = { schema: FEEDBACK_SCHEMA, items: {} };
         Object.keys(feedback.items).forEach(function (key) {
-            combined.items[key] = feedback.items[key];
+            var item = jsonClone(feedback.items[key]);
+            item.genome = cachedGenome(item.card);
+            combined.items[key] = item;
         });
         var active = readMoodStore().active;
         if (active) {
             asArray(active.records).forEach(function (record, index) {
                 if (!record || !record.card) return;
-                if (feedback.items[cardKey(record.card)]) return;
                 combined.items['mood:' + index + ':' + cardKey(record.card)] = {
                     value: record.weight >= 0 ? 1 : -1,
-                    weight: record.weight,
+                    weight: clamp(asNumber(record.weight, 0) * SESSION_TASTE_BLEND, -10, 10),
                     origin: 'current_mood',
+                    temporary: true,
+                    exactState: 0,
+                    updatedAt: record.updatedAt || active.updatedAt,
+                    genome: cachedGenome(record.card),
                     card: record.card
                 };
             });
@@ -674,19 +770,23 @@
         return combined;
     }
 
-    function setFeedback(card, value, quiet) {
+    function setFeedback(card, value, quiet, options) {
+        options = options || {};
         var safe = compactCard(card);
         var key = cardKey(safe);
         if (!key) return;
         var feedback = readFeedback();
         feedback.items[key] = {
             value: value > 0 ? 1 : -1,
+            tasteWeight: clamp(asNumber(options.tasteWeight, value > 0 ? 8 : -9), -10, 10),
+            source: options.source || 'manual',
             card: safe,
             updatedAt: Date.now()
         };
         storageSet('feedback', feedback);
         clearCache();
-        if (!quiet) notify(value > 0 ? 'Нравится — лента обновится' : 'Не нравится — лента обновится');
+        prefetchGenome(safe);
+        if (!quiet) notify(value > 0 ? 'Нравится — сохранено и учтено' : 'Не нравится — сохранено и учтено');
     }
 
     function clearMood() {
@@ -747,22 +847,41 @@
         return cache.payload || null;
     }
 
+    function fallbackCacheKey(profile) {
+        return simpleHash([filterSignature(profile.filters), boolSetting('hide_seen', true)].join('|'));
+    }
+
+    function readFallbackCache(profile) {
+        var cache = storageGet('fallback_cache', {});
+        if (!cache || cache.schema !== CACHE_SCHEMA || cache.key !== fallbackCacheKey(profile)) return null;
+        if (!cache.createdAt || Date.now() - cache.createdAt > 30 * 24 * 60 * 60 * 1000) return null;
+        return cache.payload || null;
+    }
+
     function saveCache(profile, payload) {
+        if (!payload || !asArray(payload.lines).some(function (line) { return asArray(line && line.results).length; })) return;
         storageSet('cache', {
             schema: CACHE_SCHEMA,
             signature: profile.signature,
             createdAt: Date.now(),
             payload: payload
         });
+        storageSet('fallback_cache', {
+            schema: CACHE_SCHEMA,
+            key: fallbackCacheKey(profile),
+            createdAt: Date.now(),
+            payload: payload
+        });
     }
 
-    function tmdbGet(method, params, callback) {
+    function tmdbRaw(method, params, callback) {
         var settled = false;
         function finish(result) {
             if (settled) return;
             settled = true;
-            callback(result && result.results ? result.results : []);
+            callback(result || null);
         }
+        setTimeout(function () { finish(null); }, NETWORK_GUARD_TIMEOUT);
         try {
             Lampa.Api.sources.tmdb.get(method, params || {}, function (result) {
                 finish(result);
@@ -775,11 +894,113 @@
         }
     }
 
+    function tmdbGet(method, params, callback) {
+        tmdbRaw(method, params, function (result) {
+            callback(result && result.results ? result.results : []);
+        });
+    }
+
+    function readGenomeStore() {
+        var store = storageGet('genomes', { schema: GENOME_SCHEMA, items: {} });
+        if (!store || store.schema !== GENOME_SCHEMA || !store.items) store = { schema: GENOME_SCHEMA, items: {} };
+        return store;
+    }
+
+    function cachedGenome(card) {
+        var key = cardKey(card);
+        var item = key && readGenomeStore().items[key];
+        if (!item || !item.updatedAt || Date.now() - item.updatedAt > GENOME_TTL) return null;
+        return item.genome || null;
+    }
+
+    function extractGenome(card, details) {
+        details = details || {};
+        var features = [];
+        var used = {};
+        function add(key, weight) {
+            if (!key || used[key]) return;
+            used[key] = true;
+            features.push({ key: key, weight: weight });
+        }
+        asArray(details.genres).forEach(function (genre) { add('genre:' + genre.id, 0.85); });
+        var keywordList = details.keywords && (details.keywords.keywords || details.keywords.results) || [];
+        asArray(keywordList).slice(0, 18).forEach(function (keyword) { add('keyword:' + keyword.id, 1.15); });
+        asArray(details.created_by).slice(0, 3).forEach(function (person) { add('director:' + person.id, 1.25); });
+        asArray(details.credits && details.credits.crew).filter(function (person) {
+            return person && (person.job === 'Director' || person.department === 'Directing');
+        }).slice(0, 3).forEach(function (person) { add('director:' + person.id, 1.25); });
+        var cast = asArray(details.aggregate_credits && details.aggregate_credits.cast).length
+            ? details.aggregate_credits.cast : details.credits && details.credits.cast;
+        asArray(cast).slice(0, 8).forEach(function (person) { add('cast:' + person.id, 0.42); });
+        if (details.belongs_to_collection) add('collection:' + details.belongs_to_collection.id, 1.05);
+        asArray(details.production_countries).forEach(function (country) { add('country:' + country.iso_3166_1, 0.28); });
+        var runtimeMinutes = asNumber(details.runtime, asArray(details.episode_run_time)[0] || 0);
+        if (runtimeMinutes) add('runtime:' + (runtimeMinutes < 45 ? 'short' : runtimeMinutes < 95 ? 'medium' : runtimeMinutes < 135 ? 'long' : 'epic'), 0.24);
+        return { schema: GENOME_SCHEMA, features: genomeFeatures(card, { features: features }) };
+    }
+
+    function fetchGenome(card, callback) {
+        var safe = compactCard(card);
+        var key = cardKey(safe);
+        var cached = cachedGenome(safe);
+        if (!key) return callback(null);
+        if (cached) return callback(cached);
+        if (runtime.genomeFlights[key]) {
+            runtime.genomeFlights[key].push(callback);
+            return;
+        }
+        runtime.genomeFlights[key] = [callback];
+        function finish(genome) {
+            var waiting = runtime.genomeFlights[key] || [];
+            delete runtime.genomeFlights[key];
+            waiting.forEach(function (done) { done(genome); });
+        }
+        var append = mediaType(safe) === 'tv' ? 'keywords,credits,aggregate_credits' : 'keywords,credits';
+        tmdbRaw(mediaType(safe) + '/' + safe.id + '?append_to_response=' + append, {}, function (details) {
+            var genome = extractGenome(safe, details);
+            if (!details) return finish(genome);
+            var store = readGenomeStore();
+            store.items[key] = { updatedAt: Date.now(), genome: genome };
+            var keys = Object.keys(store.items);
+            if (keys.length > 600) {
+                keys.sort(function (left, right) { return store.items[right].updatedAt - store.items[left].updatedAt; });
+                keys.slice(500).forEach(function (oldKey) { delete store.items[oldKey]; });
+            }
+            storageSet('genomes', store);
+            finish(genome);
+        });
+    }
+
+    function prefetchGenome(card) {
+        fetchGenome(card, function () {});
+    }
+
+    function ensureRecommendationGenomes(profile, pool, callback) {
+        var cards = profile.signals.slice(0, 10).map(function (signal) { return signal.card; });
+        Object.keys(pool.items).map(function (key) { return pool.items[key]; }).sort(function (left, right) {
+            return right.sourceScore - left.sourceScore;
+        }).slice(0, GENOME_FETCH_LIMIT).forEach(function (entry) { cards.push(entry.card); });
+        var unique = uniqueRecommendationCards(cards, {});
+        var tasks = unique.map(function (card) {
+            return function (done) { fetchGenome(card, function () { done(); }); };
+        });
+        runQueue(tasks, 4, function () {
+            Object.keys(pool.items).forEach(function (key) {
+                pool.items[key].card.smart_recs_genome = cachedGenome(pool.items[key].card);
+            });
+            callback(buildRuntimeProfile());
+        });
+    }
+
     function timelineShowsCompleted(value) {
         if (isArray(value)) {
-            return value.some(function (episode) {
-                return asNumber(episode && episode.view && episode.view.percent, 0) >= 90;
+            var completed = {};
+            value.forEach(function (episode, index) {
+                if (asNumber(episode && episode.view && episode.view.percent, 0) >= 90) {
+                    completed[String(episode && (episode.ep || episode.episode || episode.id) || index)] = true;
+                }
             });
+            return Object.keys(completed).length >= 2;
         }
         return asNumber(value && value.percent, 0) >= 90;
     }
@@ -1039,9 +1260,91 @@
         return tasks;
     }
 
-    function finalizeCandidates(profile, pool, excluded, limit, batch) {
+    function rerankerContext(profile, entries) {
+        return {
+            version: VERSION,
+            cards: entries.map(function (entry) { return compactCard(entry.card); }),
+            taste: {
+                signalCount: profile.signals.length,
+                coldStart: profile.coldStart,
+                filters: jsonClone(profile.filters),
+                signals: profile.signals.slice(0, 20).map(function (signal) {
+                    return { card: compactCard(signal.card), weight: signal.weight, kind: signal.kind };
+                })
+            }
+        };
+    }
+
+    function runRerankers(entries, profile, callback) {
+        var providers = runtime.rerankers.slice();
+        if (!providers.length || !entries.length) return callback(entries);
+        var cursor = 0;
+        function next() {
+            if (cursor >= providers.length) return callback(entries);
+            var provider = providers[cursor++];
+            var settled = false;
+            function finish(adjustments) {
+                if (settled) return;
+                settled = true;
+                adjustments = adjustments || {};
+                entries.forEach(function (entry) {
+                    var value = asNumber(adjustments[entry.key], 0);
+                    entry.score += clamp(value, -0.25, 0.25);
+                });
+                next();
+            }
+            setTimeout(function () { finish(null); }, 5000);
+            try {
+                provider.run(rerankerContext(profile, entries), function (error, adjustments) {
+                    finish(error ? null : adjustments);
+                });
+            } catch (error) {
+                console.warn('[SmartRecs] Reranker failed:', provider.id, error);
+                finish(null);
+            }
+        }
+        next();
+    }
+
+    function explorationQuota(limit, mode) {
+        var ratio = mode === 'precise' ? 0.05 : mode === 'explore' ? 0.30 : 0.15;
+        return Math.max(1, Math.round(limit * ratio));
+    }
+
+    function likedQuota(limit, batch) {
+        return Math.min(batch > 1 ? 5 : 10, Math.max(1, Math.ceil(limit * 0.25)));
+    }
+
+    function likedEntries(profile, excluded, limit, batch) {
+        var hideWatched = boolSetting('hide_seen', true);
+        var quota = likedQuota(limit, batch);
+        var seed = String(profile.rotationSeed || 0);
+        return Object.keys(profile.exactLiked || {}).map(function (key) {
+            var item = profile.exactLiked[key];
+            var card = item && item.card || item;
+            return { key: key, card: card, score: 1, exploration: false, reasons: [] };
+        }).filter(function (entry) {
+            if (!entry.card || excluded[entry.key] || profile.exactDisliked[entry.key]) return false;
+            if (!entry.card.poster_path && !entry.card.backdrop_path) return false;
+            if (!matchesFilters(entry.card, profile.filters)) return false;
+            return !(hideWatched && cardWasWatched(entry.card));
+        }).sort(function (left, right) {
+            return simpleHash(left.key + seed).localeCompare(simpleHash(right.key + seed));
+        }).slice(0, quota);
+    }
+
+    function mergeEvery(base, special, spacing) {
+        var result = base.slice();
+        special.forEach(function (entry, index) {
+            result.splice(Math.min(result.length, (index + 1) * spacing - 1), 0, entry);
+        });
+        return result;
+    }
+
+    function finalizeCandidates(profile, pool, excluded, limit, batch, callback) {
         var mode = setting('mode', 'balanced');
         var hideWatched = boolSetting('hide_seen', true);
+        limit = limit || INITIAL_RECOMMENDATION_LIMIT;
         excluded = excluded || {};
         var entries = Object.keys(pool.items).map(function (key) {
             var entry = pool.items[key];
@@ -1051,6 +1354,7 @@
             if (!entry.card.poster_path && !entry.card.backdrop_path) return false;
             if (!matchesFilters(entry.card, profile.filters)) return false;
             if (profile.disliked[entry.key]) return false;
+            if (profile.exactLiked[entry.key]) return false;
             if (hideWatched && cardWasWatched(entry.card)) return false;
             if (excluded[entry.key]) return false;
             return true;
@@ -1062,37 +1366,48 @@
             return list.map(function (entry) {
                 var card = jsonClone(entry.card);
                 card.smart_recs_score = Math.round(entry.score * 100);
-                card.smart_recs_reason = entry.reasons[0] || '';
+                card.smart_recs_reason = '';
                 return card;
             });
         }
-
-        var selected = selectDiverse(entries, limit || INITIAL_RECOMMENDATION_LIMIT, mode);
-        var lines = [];
-        if (selected.length) {
-            lines.push({
-                title: 'Для вас',
-                results: cards(selected),
-                nomore: true
-            });
-        }
-
-        return {
-            lines: lines,
-            meta: {
-                generatedAt: Date.now(),
-                signals: profile.signals.length,
-                candidates: entries.length,
-                coldStart: profile.coldStart,
-                batch: Math.max(1, asNumber(batch, 1))
+        runRerankers(entries, profile, function (reranked) {
+            reranked.sort(function (left, right) { return right.score - left.score; });
+            var liked = likedEntries(profile, excluded, limit, batch);
+            var exploreLimit = Math.min(explorationQuota(limit, mode), Math.max(0, limit - liked.length));
+            var exploratory = selectDiverse(reranked.filter(function (entry) { return entry.exploration; }), exploreLimit, 'explore');
+            var selectedKeys = {};
+            exploratory.forEach(function (entry) { selectedKeys[entry.key] = true; });
+            var relevant = selectDiverse(reranked.filter(function (entry) { return !entry.exploration && !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length, mode);
+            relevant.forEach(function (entry) { selectedKeys[entry.key] = true; });
+            if (relevant.length + exploratory.length < limit - liked.length) {
+                var overflow = selectDiverse(reranked.filter(function (entry) { return !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length - relevant.length, mode);
+                relevant = relevant.concat(overflow);
             }
-        };
+            var selected = mergeEvery(relevant, exploratory, Math.max(4, Math.round(limit / Math.max(1, exploratory.length))));
+            selected = mergeEvery(selected, liked, 4).slice(0, limit);
+            var lines = selected.length ? [{ title: 'Для вас', results: cards(selected), nomore: true }] : [];
+            callback({
+                lines: lines,
+                meta: {
+                    generatedAt: Date.now(),
+                    signals: profile.signals.length,
+                    candidates: entries.length,
+                    likedReserved: liked.length,
+                    explorationReserved: exploratory.length,
+                    coldStart: profile.coldStart,
+                    batch: Math.max(1, asNumber(batch, 1))
+                }
+            });
+        });
     }
 
     function generateRecommendationBatch(profile, batch, excluded, limit, callback) {
         var pool = new CandidatePool(profile);
         runQueue(recommendationTasks(profile, pool, batch), 3, function () {
-            callback(finalizeCandidates(profile, pool, excluded, limit, batch));
+            ensureRecommendationGenomes(profile, pool, function (enrichedProfile) {
+                enrichedProfile.rotationSeed = profile.rotationSeed;
+                finalizeCandidates(enrichedProfile, pool, excluded, limit, batch, callback);
+            });
         });
     }
 
@@ -1100,12 +1415,12 @@
         generateRecommendationBatch(profile, 1, {}, INITIAL_RECOMMENDATION_LIMIT, callback);
     }
 
-    function filterWatchedFromPayload(payload) {
+    function filterWatchedFromPayload(payload, profile) {
         var result = jsonClone(payload) || {};
-        if (!boolSetting('hide_seen', true)) return result;
         asArray(result.lines).forEach(function (line) {
             line.results = asArray(line && line.results).filter(function (card) {
-                return !cardWasWatched(card);
+                if (profile && (!matchesFilters(card, profile.filters) || profile.disliked[cardKey(card)])) return false;
+                return !boolSetting('hide_seen', true) || !cardWasWatched(card);
             });
         });
         return result;
@@ -1114,7 +1429,7 @@
     function getRecommendations(force, callback) {
         var profile = buildRuntimeProfile();
         var cached = force ? null : readCache(profile);
-        if (cached) return setTimeout(function () { callback(filterWatchedFromPayload(cached)); }, 0);
+        if (cached) return setTimeout(function () { callback(filterWatchedFromPayload(cached, profile)); }, 0);
 
         if (runtime.inFlight && runtime.inFlight.signature === profile.signature) {
             runtime.inFlight.callbacks.push(callback);
@@ -1123,13 +1438,18 @@
 
         var flight = { signature: profile.signature, callbacks: [callback] };
         runtime.inFlight = flight;
+        runtime.likedRotation = asNumber(storageGet('liked_rotation', 0), 0) + 1;
+        storageSet('liked_rotation', runtime.likedRotation);
+        profile.rotationSeed = runtime.likedRotation;
         generateRecommendations(profile, function (payload) {
             var waiting = flight.callbacks.slice();
+            var fallback = readFallbackCache(profile);
+            if ((!asArray(payload && payload.lines).some(function (line) { return asArray(line && line.results).length; }) || asNumber(payload && payload.meta && payload.meta.candidates, 0) === 0) && fallback) payload = fallback;
             if (runtime.inFlight === flight) {
                 saveCache(profile, payload);
                 runtime.inFlight = null;
             }
-            waiting.forEach(function (done) { done(filterWatchedFromPayload(payload)); });
+            waiting.forEach(function (done) { done(filterWatchedFromPayload(payload, profile)); });
         });
     }
 
@@ -1142,6 +1462,34 @@
         if (language !== 'ru' && russianFallback.indexOf(language) >= 0) result.push('ru');
         if (result.indexOf('en') < 0) result.push('en');
         return result;
+    }
+
+    function readVideoCache() {
+        var store = storageGet('video_cache', { schema: VIDEO_CACHE_SCHEMA, items: {} });
+        if (!store || store.schema !== VIDEO_CACHE_SCHEMA || !store.items) store = { schema: VIDEO_CACHE_SCHEMA, items: {} };
+        return store;
+    }
+
+    function videoCacheKey(card, languages) {
+        return cardKey(card) + '|' + asArray(languages).join(',');
+    }
+
+    function cachedPreviewVideo(card, languages) {
+        var item = readVideoCache().items[videoCacheKey(card, languages)];
+        if (!item || !item.updatedAt) return { hit: false, video: null };
+        var ttl = item.video ? VIDEO_CACHE_TTL : VIDEO_FAILURE_TTL;
+        return Date.now() - item.updatedAt <= ttl ? { hit: true, video: item.video || null } : { hit: false, video: null };
+    }
+
+    function savePreviewVideo(card, languages, video) {
+        var store = readVideoCache();
+        store.items[videoCacheKey(card, languages)] = { updatedAt: Date.now(), video: video || null };
+        var keys = Object.keys(store.items);
+        if (keys.length > 350) {
+            keys.sort(function (left, right) { return store.items[right].updatedAt - store.items[left].updatedAt; });
+            keys.slice(300).forEach(function (key) { delete store.items[key]; });
+        }
+        storageSet('video_cache', store);
     }
 
     function tmdbVideos(card, languages, callback) {
@@ -1179,7 +1527,9 @@
     }
 
     function prepareMoodCandidates(payload, profile, callback) {
-        var cards = cardsFromLines(payload && payload.lines);
+        var cards = cardsFromLines(payload && payload.lines).filter(function (card) {
+            return !profile.seen[cardKey(card)] && !profile.disliked[cardKey(card)];
+        });
         var used = {};
         var filters = normalizeFilters(profile.filters);
         cards.forEach(function (card) { used[cardKey(card)] = true; });
@@ -1369,6 +1719,7 @@
         var changing = false;
         var destroyed = false;
         var videoCache = {};
+        var videoFlights = {};
         var shown = {};
 
         asArray(session.records).forEach(function (record) { shown[cardKey(record.card)] = true; });
@@ -1425,10 +1776,26 @@
         function loadVideo(card, callback) {
             var key = cardKey(card);
             if (Object.prototype.hasOwnProperty.call(videoCache, key)) return callback(videoCache[key]);
+            if (videoFlights[key]) {
+                videoFlights[key].push(callback);
+                return;
+            }
+            videoFlights[key] = [callback];
+            function finish(video) {
+                videoCache[key] = video;
+                var waiting = videoFlights[key] || [];
+                delete videoFlights[key];
+                waiting.forEach(function (done) { done(video); });
+            }
             var languages = interfaceVideoLanguages();
+            var persistent = cachedPreviewVideo(card, languages);
+            if (persistent.hit) {
+                return finish(persistent.video);
+            }
             tmdbVideos(card, languages, function (videos) {
-                videoCache[key] = selectPreviewVideo(videos, languages);
-                callback(videoCache[key]);
+                var selected = selectPreviewVideo(videos, languages);
+                savePreviewVideo(card, languages, selected);
+                finish(selected);
             });
         }
 
@@ -1516,8 +1883,14 @@
                 weight: moodSignalWeight(action, watched, Boolean(currentVideo)),
                 updatedAt: Date.now()
             });
-            if (action === 'next') setFeedback(current, -1, true);
-            if (action === 'like' || action === 'watch') setFeedback(current, 1, true);
+            if (action === 'next') setFeedback(current, -1, true, {
+                source: 'trailer',
+                tasteWeight: trailerTasteWeight(action, watched, Boolean(currentVideo))
+            });
+            if (action === 'like' || action === 'watch') setFeedback(current, 1, true, {
+                source: 'trailer',
+                tasteWeight: trailerTasteWeight(action, watched, Boolean(currentVideo))
+            });
             saveSession(false);
             if (count() === MOOD_MINIMUM) clearCache();
             updateProgress();
@@ -1930,6 +2303,7 @@
             loadingMore = true;
             var batch = nextBatch++;
             var profile = buildRuntimeProfile();
+            profile.rotationSeed = runtime.likedRotation;
             generateRecommendationBatch(profile, batch, feedKnown, MORE_RECOMMENDATION_LIMIT, function (payload) {
                 if (!alive) return;
                 loadingMore = false;
@@ -2201,6 +2575,19 @@
         runtime.protectedFeatures[feature.id] = feature;
     }
 
+    function registerReranker(provider) {
+        if (!provider || !provider.id || typeof provider.run !== 'function') {
+            throw new Error('Reranker requires id and run(context, done)');
+        }
+        runtime.rerankers = runtime.rerankers.filter(function (item) { return item.id !== provider.id; });
+        runtime.rerankers.push(provider);
+        clearCache();
+        return function () {
+            runtime.rerankers = runtime.rerankers.filter(function (item) { return item.id !== provider.id; });
+            clearCache();
+        };
+    }
+
     function runProtectedFeature(id, context) {
         var feature = runtime.protectedFeatures[id];
         if (!feature) return notify('Защищённая функция не зарегистрирована', true);
@@ -2267,6 +2654,7 @@
         clearMood: clearMood,
         resetAll: clearAllRecommendations,
         registerProtectedFeature: registerProtectedFeature,
+        registerReranker: registerReranker,
         runProtectedFeature: runProtectedFeature
     };
 

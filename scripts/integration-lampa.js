@@ -9,7 +9,8 @@ const path = require('node:path');
 const chrome = process.env.CHROME_PATH;
 const targetUrl = process.env.LAMPA_URL || 'http://127.0.0.1:3000';
 const port = Number(process.env.CHROME_DEBUG_PORT || 9227);
-const pluginSource = fs.readFileSync(path.join(__dirname, '..', 'smart-recs.js'), 'utf8');
+const pluginSource = fs.readFileSync(path.join(__dirname, '..', 'smart-recs.js'), 'utf8')
+  .replace("'https://smackftw.github.io/lampa-smart-recs/'", JSON.stringify(`${targetUrl.replace(/\/$/, '')}/`));
 
 if (!chrome || !fs.existsSync(chrome)) {
   console.error('Set CHROME_PATH to an installed Chrome/Chromium executable.');
@@ -429,9 +430,11 @@ async function inspect() {
   if (!watchSessionOpened) throw new Error('Watch trailer session did not open');
   const watchBefore = await evaluate(`(() => {
     const title = document.querySelector('.smart-recs-mood__title')?.textContent || '';
+    const draft = window.Lampa?.Storage?.get('lampa_smart_recs_mood', {})?.draft;
     window.Lampa.Controller.move('left');
     return {
       title,
+      key: draft?.presented?.[draft.presented.length - 1] || '',
       focused: document.querySelector('.smart-recs-mood__button--watch')?.classList.contains('focus') || false,
       component: window.Lampa?.Activity?.active()?.component || ''
     };
@@ -443,13 +446,14 @@ async function inspect() {
     watchAction = await evaluate(`({
       overlay: document.querySelectorAll('.smart-recs-mood').length,
       component: window.Lampa?.Activity?.active()?.component || '',
-      positiveFeedback: Object.values(window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items || {}).filter((item) => item.value > 0).length
+      positiveFeedback: Object.values(window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items || {}).filter((item) => item.value > 0).length,
+      watchedValue: window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items?.[${JSON.stringify(watchBefore.key)}]?.value || 0
     })`);
-    if (watchAction.overlay === 0 && watchAction.component === 'full' && watchAction.positiveFeedback >= 2) break;
+    if (watchAction.overlay === 0 && watchAction.component === 'full' && watchAction.watchedValue === 1) break;
     await delay(250);
   }
   phase('movie card opened');
-  if (watchAction?.overlay !== 0 || watchAction?.component !== 'full' || watchAction?.positiveFeedback < 2) throw new Error(`Watch action failed: ${JSON.stringify(watchAction)}`);
+  if (watchAction?.overlay !== 0 || watchAction?.component !== 'full' || watchAction?.watchedValue !== 1) throw new Error(`Watch action failed: ${JSON.stringify(watchAction)}`);
 
   const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
   socket.close();
@@ -472,7 +476,7 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.4.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.5.0' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -498,7 +502,7 @@ async function inspect() {
       report.moodActivation?.activeRecords !== 10 || report.moodActivation?.hasDraft ||
       report.moodActivation?.recommendationEntry !== 1 || report.moodActivation?.profileSignals < 10 ||
       !report.watchBefore?.focused || report.watchAction?.overlay !== 0 || report.watchAction?.component !== 'full' ||
-      report.watchAction?.positiveFeedback < 2 ||
+      report.watchAction?.watchedValue !== 1 ||
       report.exceptions.length) process.exitCode = 1;
   } catch (error) {
     console.error(error.stack || error.message);

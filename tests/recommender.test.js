@@ -257,8 +257,15 @@ test('uses ordered trailer language fallbacks', () => {
 test('mood signals distinguish a quick skip from a watched preview', () => {
   assert.ok(core.moodSignalWeight('next', 2, true) < core.moodSignalWeight('next', 25, true));
   assert.ok(core.moodSignalWeight('complete', 30, true) > 0);
-  assert.ok(core.moodSignalWeight('like', 1, true) > 0);
-  assert.ok(core.moodSignalWeight('watch', 3, true) > core.moodSignalWeight('complete', 30, true));
+  assert.equal(core.moodSignalWeight('like', 1, true), 6);
+  assert.equal(core.moodSignalWeight('like', 7, true), 7);
+  assert.equal(core.moodSignalWeight('like', 15, true), 8);
+  assert.equal(core.moodSignalWeight('like', 25, true), 9);
+  assert.equal(core.trailerTasteWeight('like', 2, true), 6);
+  assert.equal(core.trailerTasteWeight('like', 25, true), 9);
+  assert.equal(core.moodSignalWeight('watch', 3, true), core.moodSignalWeight('complete', 30, true));
+  assert.equal(core.moodSignalWeight('watch', 1, true), 4);
+  assert.equal(core.trailerTasteWeight('watch', 1, true), 0);
 });
 
 test('trailer progress uses the playable part of short videos', () => {

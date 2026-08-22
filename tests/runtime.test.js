@@ -203,12 +203,25 @@ test('boots against the current public Lampa plugin surface', async () => {
       },
     },
   });
+  storage.set('lampa_smart_recs_watch_intents', {
+    schema: 1,
+    items: {
+      'movie:12': {
+        openedAt: Date.now(),
+        card: { id: 12, media_type: 'movie', title: 'Completed from recommendations', genre_ids: [18], poster_path: '/poster.jpg' },
+      },
+    },
+  });
 
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.6.0');
+  assert.equal(context.window.LampaSmartRecs.version, '0.6.1');
   assert.equal(storage.get('lampa_smart_recs_feedback').schema, 2);
+  assert.equal(storage.get('lampa_smart_recs_feedback').items['movie:12'].value, 1);
+  assert.equal(storage.get('lampa_smart_recs_feedback').items['movie:12'].tasteWeight, 8);
+  assert.equal(storage.get('lampa_smart_recs_feedback').items['movie:12'].source, 'completed_watch');
+  assert.equal(Object.keys(storage.get('lampa_smart_recs_watch_intents').items).length, 0);
   assert.equal(components.has('lampa_smart_recs'), true);
   assert.equal(rows.length, 1);
   assert.equal(pluginMenus.length, 0);

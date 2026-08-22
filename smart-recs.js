@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.6.0
+ * Lampa Smart Recs v0.6.1
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,13 +9,14 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.6.0';
+    var VERSION = '0.6.1';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
     var FILTER_SCHEMA = 1;
     var GENOME_SCHEMA = 1;
     var VIDEO_CACHE_SCHEMA = 1;
+    var WATCH_INTENT_SCHEMA = 1;
     var MOOD_MINIMUM = 10;
     var MOOD_MAXIMUM = 60;
     var MOOD_TTL = 48 * 60 * 60 * 1000;
@@ -35,6 +36,8 @@
     var GENOME_FETCH_LIMIT = 28;
     var VIDEO_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
     var VIDEO_FAILURE_TTL = 6 * 60 * 60 * 1000;
+    var WATCH_INTENT_TTL = 365 * 24 * 60 * 60 * 1000;
+    var WATCH_INTENT_LIMIT = 200;
     var TASTE_HALF_LIFE = 180 * 24 * 60 * 60 * 1000;
     var SESSION_TASTE_BLEND = 0.42;
     var PREFIX = 'lampa_smart_recs_';
@@ -306,7 +309,13 @@
 
     function moodSignalWeight(action, watchedSeconds, hasVideo) {
         var seconds = Math.max(0, asNumber(watchedSeconds, 0));
-        if (action === 'watch' || action === 'like') return 9;
+        if (action === 'watch') return hasVideo === false ? 1.5 : 4;
+        if (action === 'like') {
+            if (seconds >= 22) return 9;
+            if (seconds >= 12) return 8;
+            if (seconds >= 5) return 7;
+            return 6;
+        }
         if (action === 'complete') return hasVideo === false ? 1.5 : 4;
         if (seconds >= 22) return -1;
         if (seconds >= 12) return -2.5;
@@ -343,7 +352,8 @@
     }
 
     function trailerTasteWeight(action, watchedSeconds, hasVideo) {
-        if (action === 'like' || action === 'watch') return 8;
+        if (action === 'watch') return 0;
+        if (action === 'like') return moodSignalWeight(action, watchedSeconds, hasVideo);
         if (action !== 'next') return 0;
         return moodSignalWeight(action, watchedSeconds, hasVideo);
     }
@@ -793,6 +803,59 @@
         return feedback;
     }
 
+    function readWatchIntents() {
+        var intents = storageGet('watch_intents', { schema: WATCH_INTENT_SCHEMA, items: {} });
+        if (!intents || intents.schema !== WATCH_INTENT_SCHEMA || !intents.items) return { schema: WATCH_INTENT_SCHEMA, items: {} };
+        return intents;
+    }
+
+    function rememberWatchIntent(card) {
+        var safe = compactCard(card);
+        var key = cardKey(safe);
+        if (!key) return;
+        var intents = readWatchIntents();
+        intents.items[key] = { card: safe, openedAt: Date.now() };
+        var keys = Object.keys(intents.items).sort(function (left, right) {
+            return asNumber(intents.items[right].openedAt, 0) - asNumber(intents.items[left].openedAt, 0);
+        });
+        keys.slice(WATCH_INTENT_LIMIT).forEach(function (oldKey) { delete intents.items[oldKey]; });
+        storageSet('watch_intents', intents);
+    }
+
+    function promoteCompletedWatchIntents() {
+        var intents = readWatchIntents();
+        var feedback = readFeedback();
+        var now = Date.now();
+        var changed = false;
+        var promoted = [];
+        Object.keys(intents.items).forEach(function (key) {
+            var intent = intents.items[key];
+            if (!intent || !intent.card || now - asNumber(intent.openedAt, now) > WATCH_INTENT_TTL) {
+                delete intents.items[key];
+                changed = true;
+                return;
+            }
+            if (!cardWasWatched(intent.card)) return;
+            feedback.items[key] = {
+                value: 1,
+                tasteWeight: 8,
+                source: 'completed_watch',
+                card: compactCard(intent.card),
+                updatedAt: now
+            };
+            promoted.push(intent.card);
+            delete intents.items[key];
+            changed = true;
+        });
+        if (changed) storageSet('watch_intents', intents);
+        if (promoted.length) {
+            storageSet('feedback', feedback);
+            clearCache();
+            promoted.forEach(prefetchGenome);
+        }
+        return promoted.length;
+    }
+
     function emptyMoodStore() {
         return { schema: MOOD_SCHEMA, active: null, draft: null };
     }
@@ -892,6 +955,11 @@
             updatedAt: Date.now()
         };
         storageSet('feedback', feedback);
+        var intents = readWatchIntents();
+        if (intents.items[key]) {
+            delete intents.items[key];
+            storageSet('watch_intents', intents);
+        }
         clearCache();
         prefetchGenome(safe);
         if (!quiet) notify(value > 0 ? 'Нравится — сохранено и учтено' : 'Не нравится — сохранено и учтено');
@@ -906,6 +974,7 @@
     function clearAllRecommendations() {
         storageSet('feedback', { schema: FEEDBACK_SCHEMA, items: {} });
         storageSet('mood', emptyMoodStore());
+        storageSet('watch_intents', { schema: WATCH_INTENT_SCHEMA, items: {} });
         clearCache();
         notify('Все оценки удалены — рекомендации начнутся с нуля');
     }
@@ -927,6 +996,7 @@
     }
 
     function buildRuntimeProfile() {
+        promoteCompletedWatchIntents();
         var profile = buildProfileFromFeedback(learningFeedback());
         profile.filters = readFilters();
         profile.signature = simpleHash([
@@ -2131,7 +2201,7 @@
                 source: 'trailer',
                 tasteWeight: trailerTasteWeight(action, watched, Boolean(currentVideo))
             });
-            if (action === 'like' || action === 'watch') setFeedback(current, 1, true, {
+            if (action === 'like') setFeedback(current, 1, true, {
                 source: 'trailer',
                 tasteWeight: trailerTasteWeight(action, watched, Boolean(currentVideo))
             });
@@ -2149,6 +2219,7 @@
             record(action);
             if (action === 'watch') {
                 var card = current;
+                rememberWatchIntent(card);
                 self.destroy();
                 Lampa.Activity.push({
                     url: '', component: 'full', id: card.id, method: mediaType(card), card: card, source: 'tmdb'
@@ -2511,6 +2582,7 @@
             item.onHover = function (target, data) { focusItem(item, target, data, true); };
             item.onEnter = function (target, data) {
                 last = target;
+                rememberWatchIntent(data);
                 Lampa.Activity.push({
                     url: '',
                     component: 'full',
@@ -2646,6 +2718,7 @@
         };
 
         component.start = function () {
+            promoteCompletedWatchIntents();
             Lampa.Controller.add('content', {
                 link: component,
                 toggle: function () {

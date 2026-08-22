@@ -494,13 +494,14 @@ async function inspect() {
       overlay: document.querySelectorAll('.smart-recs-mood').length,
       component: window.Lampa?.Activity?.active()?.component || '',
       positiveFeedback: Object.values(window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items || {}).filter((item) => item.value > 0).length,
-      watchedValue: window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items?.[${JSON.stringify(watchBefore.key)}]?.value || 0
+      watchedValue: window.Lampa?.Storage?.get('lampa_smart_recs_feedback', {})?.items?.[${JSON.stringify(watchBefore.key)}]?.value || 0,
+      watchIntent: Boolean(window.Lampa?.Storage?.get('lampa_smart_recs_watch_intents', {})?.items?.[${JSON.stringify(watchBefore.key)}])
     })`);
-    if (watchAction.overlay === 0 && watchAction.component === 'full' && watchAction.watchedValue === 1) break;
+    if (watchAction.overlay === 0 && watchAction.component === 'full' && watchAction.watchedValue === 0 && watchAction.watchIntent) break;
     await delay(250);
   }
   phase('movie card opened');
-  if (watchAction?.overlay !== 0 || watchAction?.component !== 'full' || watchAction?.watchedValue !== 1) throw new Error(`Watch action failed: ${JSON.stringify(watchAction)}`);
+  if (watchAction?.overlay !== 0 || watchAction?.component !== 'full' || watchAction?.watchedValue !== 0 || !watchAction?.watchIntent) throw new Error(`Watch action failed: ${JSON.stringify(watchAction)}`);
 
   const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
   socket.close();
@@ -524,7 +525,7 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.6.0' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.6.1' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.controller !== 'modal' || !report.filterPrompt?.focused || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -555,7 +556,7 @@ async function inspect() {
       report.moodActivation?.activeRecords !== 10 || report.moodActivation?.hasDraft ||
       report.moodActivation?.recommendationEntry !== 1 || report.moodActivation?.profileSignals < 10 ||
       !report.watchBefore?.focused || report.watchAction?.overlay !== 0 || report.watchAction?.component !== 'full' ||
-      report.watchAction?.watchedValue !== 1 ||
+      report.watchAction?.watchedValue !== 0 || !report.watchAction?.watchIntent ||
       report.exceptions.length) process.exitCode = 1;
   } catch (error) {
     console.error(error.stack || error.message);

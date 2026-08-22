@@ -238,6 +238,12 @@ test('trailer progress uses the playable part of short videos', () => {
   assert.equal(core.previewClipDuration(0, 8), 30);
 });
 
+test('trailer reveal waits for clean playback without hiding short clips too long', () => {
+  assert.equal(core.previewRevealDelay(120, 8), 3500);
+  assert.equal(core.previewRevealDelay(18, 8), 1800);
+  assert.equal(core.previewRevealDelay(2, 0), 700);
+});
+
 test('reserves only a quarter of each feed batch for exact likes', () => {
   assert.equal(core.likedQuota(40, 1), 10);
   assert.equal(core.likedQuota(20, 2), 5);

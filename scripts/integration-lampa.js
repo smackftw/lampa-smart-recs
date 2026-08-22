@@ -295,6 +295,9 @@ async function inspect() {
       ready: document.querySelector('.smart-recs-mood__media iframe')?.classList.contains('ready') || false,
       cardTitle: document.querySelector('.smart-recs-mood__title')?.textContent || '',
       status: document.querySelector('.smart-recs-mood__status')?.textContent || '',
+      curtainHidden: document.querySelector('.smart-recs-mood__curtain')?.classList.contains('hide') || false,
+      statusHidden: document.querySelector('.smart-recs-mood__status')?.classList.contains('hide') || false,
+      titleLoading: document.querySelector('.smart-recs-mood__title')?.classList.contains('loading') || false,
       descriptionNodes: document.querySelectorAll('.smart-recs-mood__overview, .smart-recs-mood__eyebrow').length,
       playerPointerEvents: (() => {
         const item = document.querySelector('.smart-recs-mood__media iframe');
@@ -348,6 +351,11 @@ async function inspect() {
     })()`);
     await evaluate("window.Lampa.Controller.enter()")
   }
+  const loadingTransition = await evaluate(`({
+    curtainVisible: !document.querySelector('.smart-recs-mood__curtain')?.classList.contains('hide'),
+    frameReady: document.querySelector('.smart-recs-mood__media iframe')?.classList.contains('ready') || false,
+    statusVisible: !document.querySelector('.smart-recs-mood__status')?.classList.contains('hide')
+  })`);
   let remoteNavigation;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     remoteNavigation = await evaluate(`({
@@ -367,7 +375,7 @@ async function inspect() {
   if (process.env.TRAILER_ONLY === '1') {
     const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
     socket.close();
-    return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, remoteNavigation, bridgeMessages, exceptions, consoleMessages };
+    return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, loadingTransition, remoteNavigation, bridgeMessages, exceptions, consoleMessages };
   }
 
   const secondMoodTitle = remoteNavigation.cardTitle;
@@ -479,7 +487,7 @@ async function inspect() {
 
   const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
   socket.close();
-  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, remoteNavigation, likeButtonSelection, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
+  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, loadingTransition, remoteNavigation, likeButtonSelection, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
 }
 
 (async () => {
@@ -494,11 +502,12 @@ async function inspect() {
         !report.filterResult?.configured || report.filterResult?.cards < 1 || report.filterResult?.invalid !== 0 ||
         report.dislikeRemoval?.cards !== report.dislikeBefore?.cards - 1 || !report.dislikeRemoval?.focused || report.dislikeRemoval?.feedbackValue !== -1 ||
         (report.moodScreen?.iframe === 1 && !report.moodScreen?.ready) ||
+        !report.loadingTransition?.curtainVisible || report.loadingTransition?.frameReady || !report.loadingTransition?.statusVisible ||
         (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.ready) ||
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.5.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.5.4' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.controller !== 'modal' || !report.filterPrompt?.focused || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -510,9 +519,11 @@ async function inspect() {
       report.dislikeRemoval?.cards !== report.dislikeBefore?.cards - 1 || !report.dislikeRemoval?.focused || report.dislikeRemoval?.feedbackValue !== -1 ||
       report.moodScreen?.buttons?.join('|') !== 'Смотреть|Нравится|Дальше' ||
       report.moodScreen?.descriptionNodes !== 0 || report.moodScreen?.playerPointerEvents !== 'none' ||
+      !report.moodScreen?.curtainHidden || !report.moodScreen?.statusHidden || report.moodScreen?.titleLoading ||
       (report.moodScreen?.iframe === 1 && !report.moodScreen?.ready) ||
       report.moodScreen?.controller !== 'smart_recs_mood' || !report.leftSelection?.likeFocused || !report.leftSelection?.watchFocused || report.leftSelection?.records !== 0 ||
       !report.rightSelection?.likeFocused || !report.rightSelection?.nextFocused || report.rightSelection?.records !== 0 ||
+      !report.loadingTransition?.curtainVisible || report.loadingTransition?.frameReady || !report.loadingTransition?.statusVisible ||
       report.remoteNavigation?.records !== 1 ||
       (report.remoteNavigation?.iframe === 1 && !report.remoteNavigation?.ready) ||
       report.remoteNavigation?.status?.includes('Нажмите') ||

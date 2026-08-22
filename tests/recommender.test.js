@@ -247,7 +247,7 @@ test('trailer reveal waits for clean playback without hiding short clips too lon
 test('mood progress becomes complete at ten without presenting sixty as a goal', () => {
   const partial = core.moodProgressView(7, 0.5);
   assert.equal(partial.ready, false);
-  assert.equal(partial.text, '7 / 10 · настраиваем настроение');
+  assert.equal(partial.text, '7 / 10 · создаём настроение');
   assert.equal(partial.percent, 75);
 
   const ready = core.moodProgressView(10, 0);

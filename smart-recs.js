@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.5.5
+ * Lampa Smart Recs v0.5.6
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.5.5';
+    var VERSION = '0.5.6';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -332,7 +332,7 @@
         var ready = amount >= MOOD_MINIMUM;
         return {
             ready: ready,
-            text: ready ? ratingCountText(amount) + ' · улучшаем ленту' : amount + ' / ' + MOOD_MINIMUM + ' · настраиваем настроение',
+            text: ready ? ratingCountText(amount) + ' · улучшаем ленту' : amount + ' / ' + MOOD_MINIMUM + ' · создаём настроение',
             percent: ready ? 100 : clamp((amount + clamp(asNumber(actionProgress, 0), 0, 1)) / MOOD_MINIMUM * 100, 0, 100)
         };
     }

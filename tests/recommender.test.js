@@ -180,6 +180,36 @@ test('diversity selector does not mutate its input', () => {
   assert.deepEqual(entries, original);
 });
 
+test('balanced feed keeps a strong anime history from monopolizing all selected kinds', () => {
+  const entries = [];
+  for (let index = 0; index < 30; index += 1) {
+    entries.push({
+      key: `anime:${index}`,
+      card: movie(1000 + index, [16, 878], { original_language: 'ja' }),
+      score: 1 - index / 1000,
+    });
+  }
+  for (let index = 0; index < 10; index += 1) {
+    entries.push({ key: `movie:${index}`, card: movie(2000 + index, [878]), score: 0.62 - index / 1000 });
+    entries.push({ key: `tv:${index}`, card: movie(3000 + index, [10765], { media_type: 'tv' }), score: 0.60 - index / 1000 });
+  }
+
+  const selected = core.selectDiverse(entries, 30, 'balanced', {
+    initialKindUse: { anime: 10 },
+    kindCount: 3,
+    totalLimit: 40,
+  });
+  const counts = selected.reduce((result, entry) => {
+    const kind = core.contentKind(entry.card);
+    result[kind] = (result[kind] || 0) + 1;
+    return result;
+  }, {});
+
+  assert.ok(counts.anime <= 14);
+  assert.ok(counts.movie > 0);
+  assert.ok(counts.tv > 0);
+});
+
 test('plans non-overlapping source pages for endless recommendation batches', () => {
   const first = core.recommendationBatchPlan(1);
   const second = core.recommendationBatchPlan(2);
@@ -303,4 +333,56 @@ test('mood reranking reacts immediately to the last choices', () => {
   ], {});
 
   assert.equal(ranked[0].id, scienceFiction.id);
+});
+
+test('first ten mood trailers cover movies, series, and anime despite an anime-heavy prior score', () => {
+  const filters = core.normalizeFilters({
+    schema: 1,
+    configured: true,
+    types: { movie: true, tv: true, anime: true, cartoon: false },
+    genres: { science_fiction: 1, action: 1, thriller: 1, detective: 1 },
+    rating: 6,
+  });
+  const candidates = [];
+  const movieGenres = [878, 28, 53, 9648];
+  const tvGenres = [10765, 10759, 53, 9648];
+  for (let index = 0; index < 16; index += 1) {
+    const anime = movie(4000 + index, [16, movieGenres[index % movieGenres.length]], { original_language: 'ja' });
+    anime.smart_recs_score = 99;
+    candidates.push(anime);
+  }
+  for (let index = 0; index < 8; index += 1) {
+    const liveMovie = movie(5000 + index, [movieGenres[index % movieGenres.length]]);
+    liveMovie.smart_recs_score = 62;
+    candidates.push(liveMovie);
+    const series = movie(6000 + index, [tvGenres[index % tvGenres.length]], { media_type: 'tv' });
+    series.smart_recs_score = 60;
+    candidates.push(series);
+  }
+
+  const shown = {};
+  const records = [];
+  const sequence = [];
+  const selectedCards = [];
+  for (let index = 0; index < 10; index += 1) {
+    const ranked = core.rankDiagnosticMoodCards(candidates, records, shown, filters);
+    const selected = ranked[0];
+    sequence.push(core.contentKind(selected));
+    selectedCards.push(selected);
+    shown[core.cardKey(selected)] = true;
+    records.push({ card: selected, weight: 9 });
+  }
+
+  const counts = sequence.reduce((result, kind) => {
+    result[kind] = (result[kind] || 0) + 1;
+    return result;
+  }, {});
+  assert.equal(new Set(sequence.slice(0, 3)).size, 3);
+  assert.ok(counts.anime <= 5);
+  assert.ok(counts.movie >= 1);
+  assert.ok(counts.tv >= 1);
+  assert.equal(selectedCards.some((card) => card.genre_ids.includes(878) || card.genre_ids.includes(10765)), true);
+  assert.equal(selectedCards.some((card) => card.genre_ids.includes(28) || card.genre_ids.includes(10759)), true);
+  assert.equal(selectedCards.some((card) => card.genre_ids.includes(53)), true);
+  assert.equal(selectedCards.some((card) => card.genre_ids.includes(9648)), true);
 });

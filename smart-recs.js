@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.5.6
+ * Lampa Smart Recs v0.6.0
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.5.6';
+    var VERSION = '0.6.0';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -262,6 +262,11 @@
         return simpleHash(JSON.stringify({ types: filters.types, genres: filters.genres, rating: filters.rating }));
     }
 
+    function selectedContentKinds(filters) {
+        filters = normalizeFilters(filters);
+        return CONTENT_TYPES.filter(function (type) { return filters.types[type.id]; }).map(function (type) { return type.id; });
+    }
+
     function titleOf(card) {
         return card && (card.title || card.name || card.original_title || card.original_name) || 'Без названия';
     }
@@ -376,6 +381,49 @@
         }).slice().sort(function (left, right) {
             return moodCardScore(right, taste) - moodCardScore(left, taste);
         });
+    }
+
+    function rankDiagnosticMoodCards(cards, records, excluded, filters) {
+        var ranked = rankMoodCards(cards, records, excluded);
+        if (asArray(records).length >= MOOD_MINIMUM || ranked.length < 2) return ranked;
+        filters = normalizeFilters(filters);
+        var enabledKinds = selectedContentKinds(filters);
+        var wantedGenres = FILTER_GENRES.filter(function (genre) { return filters.genres[genre.id] > 0; });
+        var taste = buildMoodTaste(records);
+        var kindUse = {};
+        var genreUse = {};
+        enabledKinds.forEach(function (kind) { kindUse[kind] = 0; });
+        asArray(records).forEach(function (record) {
+            if (!record || !record.card) return;
+            var kind = contentKind(record.card);
+            kindUse[kind] = (kindUse[kind] || 0) + 1;
+            wantedGenres.forEach(function (genre) {
+                if (cardHasFilterGenre(record.card, genre)) genreUse[genre.id] = (genreUse[genre.id] || 0) + 1;
+            });
+        });
+        var availableKinds = {};
+        ranked.forEach(function (card) { availableKinds[contentKind(card)] = true; });
+        var activeKindCount = enabledKinds.filter(function (kind) { return availableKinds[kind] || kindUse[kind]; }).length;
+        var kindCap = activeKindCount > 1 ? Math.ceil(MOOD_MINIMUM / activeKindCount) + 1 : MOOD_MINIMUM;
+        var hasKindBelowCap = ranked.some(function (card) { return (kindUse[contentKind(card)] || 0) < kindCap; });
+
+        return ranked.map(function (card, index) {
+            var kind = contentKind(card);
+            var used = kindUse[kind] || 0;
+            var coverage = used === 0 && activeKindCount > 1 ? 2 : 0;
+            wantedGenres.forEach(function (genre) {
+                if (!genreUse[genre.id] && cardHasFilterGenre(card, genre)) coverage += 0.65;
+            });
+            return {
+                card: card,
+                index: index,
+                blocked: hasKindBelowCap && used >= kindCap,
+                score: moodCardScore(card, taste) + coverage - used * 0.12
+            };
+        }).sort(function (left, right) {
+            if (left.blocked !== right.blocked) return left.blocked ? 1 : -1;
+            return right.score - left.score || left.index - right.index;
+        }).map(function (entry) { return entry.card; });
     }
 
     function shrinkMap(map, prior) {
@@ -597,22 +645,42 @@
             + deterministicJitter;
     }
 
-    function selectDiverse(entries, limit, mode) {
+    function selectDiverse(entries, limit, mode, options) {
+        options = options || {};
         var remaining = entries.slice();
         var selected = [];
         var genreUse = {};
         var typeUse = { movie: 0, tv: 0 };
+        var kindUse = {};
+        Object.keys(options.initialKindUse || {}).forEach(function (kind) {
+            kindUse[kind] = Math.max(0, asNumber(options.initialKindUse[kind], 0));
+        });
+        var availableKinds = {};
+        remaining.forEach(function (entry) { availableKinds[contentKind(entry.card)] = true; });
+        Object.keys(kindUse).forEach(function (kind) { if (kindUse[kind]) availableKinds[kind] = true; });
+        var kindCount = Math.max(asNumber(options.kindCount, 0), Object.keys(availableKinds).length);
+        var totalLimit = Math.max(limit, asNumber(options.totalLimit, limit));
+        var kindRatio = mode === 'precise' ? 0.72 : mode === 'explore' ? 0.52 : 0.60;
+        var kindCap = kindCount > 1 ? Math.max(2, Math.ceil(totalLimit * kindRatio)) : totalLimit;
+        var kindPenalty = mode === 'precise' ? 0.025 : mode === 'explore' ? 0.075 : 0.045;
         var penalty = mode === 'explore' ? 0.055 : 0.035;
 
         while (remaining.length && selected.length < limit) {
             var bestIndex = 0;
             var bestValue = -Infinity;
+            var hasKindBelowCap = remaining.some(function (entry) {
+                return (kindUse[contentKind(entry.card)] || 0) < kindCap;
+            });
+            if (!hasKindBelowCap && options.strictKindCap) break;
             remaining.forEach(function (entry, index) {
+                var kind = contentKind(entry.card);
+                if (hasKindBelowCap && (kindUse[kind] || 0) >= kindCap) return;
                 var duplicatePenalty = 0;
                 genreIds(entry.card).slice(0, 3).forEach(function (genre) {
                     duplicatePenalty += (genreUse[genre] || 0) * penalty;
                 });
                 duplicatePenalty += Math.max(0, typeUse[mediaType(entry.card)] - selected.length * 0.72) * 0.02;
+                duplicatePenalty += (kindUse[kind] || 0) * kindPenalty;
                 if (entry.score - duplicatePenalty > bestValue) {
                     bestValue = entry.score - duplicatePenalty;
                     bestIndex = index;
@@ -622,6 +690,7 @@
             var chosen = remaining.splice(bestIndex, 1)[0];
             selected.push(chosen);
             typeUse[mediaType(chosen.card)] += 1;
+            kindUse[contentKind(chosen.card)] = (kindUse[contentKind(chosen.card)] || 0) + 1;
             genreIds(chosen.card).slice(0, 3).forEach(function (genre) {
                 genreUse[genre] = (genreUse[genre] || 0) + 1;
             });
@@ -639,6 +708,7 @@
         normalizeFilters: normalizeFilters,
         matchesFilters: matchesFilters,
         filterSignature: filterSignature,
+        selectedContentKinds: selectedContentKinds,
         buildProfileFromFeedback: buildProfileFromFeedback,
         affinityScore: affinityScore,
         qualityScore: qualityScore,
@@ -660,7 +730,8 @@
         likedQuota: likedQuota,
         buildMoodTaste: buildMoodTaste,
         moodCardScore: moodCardScore,
-        rankMoodCards: rankMoodCards
+        rankMoodCards: rankMoodCards,
+        rankDiagnosticMoodCards: rankDiagnosticMoodCards
     };
 
     if (window.__LAMPA_SMART_RECS_TEST__) {
@@ -1378,6 +1449,17 @@
         return result;
     }
 
+    function contentKindCounts(items) {
+        var counts = {};
+        asArray(items).forEach(function (item) {
+            var card = item && item.card || item;
+            if (!card) return;
+            var kind = contentKind(card);
+            counts[kind] = (counts[kind] || 0) + 1;
+        });
+        return counts;
+    }
+
     function finalizeCandidates(profile, pool, excluded, limit, batch, callback) {
         var mode = setting('mode', 'balanced');
         var hideWatched = boolSetting('hide_seen', true);
@@ -1410,15 +1492,40 @@
         runRerankers(entries, profile, function (reranked) {
             reranked.sort(function (left, right) { return right.score - left.score; });
             var liked = likedEntries(profile, excluded, limit, batch);
+            var kindCount = selectedContentKinds(profile.filters).length;
             var exploreLimit = Math.min(explorationQuota(limit, mode), Math.max(0, limit - liked.length));
-            var exploratory = selectDiverse(reranked.filter(function (entry) { return entry.exploration; }), exploreLimit, 'explore');
+            var exploratory = selectDiverse(reranked.filter(function (entry) { return entry.exploration; }), exploreLimit, 'explore', {
+                initialKindUse: contentKindCounts(liked),
+                kindCount: kindCount,
+                totalLimit: limit,
+                strictKindCap: true
+            });
             var selectedKeys = {};
             exploratory.forEach(function (entry) { selectedKeys[entry.key] = true; });
-            var relevant = selectDiverse(reranked.filter(function (entry) { return !entry.exploration && !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length, mode);
+            var relevant = selectDiverse(reranked.filter(function (entry) { return !entry.exploration && !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length, mode, {
+                initialKindUse: contentKindCounts(liked.concat(exploratory)),
+                kindCount: kindCount,
+                totalLimit: limit,
+                strictKindCap: true
+            });
             relevant.forEach(function (entry) { selectedKeys[entry.key] = true; });
             if (relevant.length + exploratory.length < limit - liked.length) {
-                var overflow = selectDiverse(reranked.filter(function (entry) { return !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length - relevant.length, mode);
+                var overflow = selectDiverse(reranked.filter(function (entry) { return !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length - relevant.length, mode, {
+                    initialKindUse: contentKindCounts(liked.concat(exploratory, relevant)),
+                    kindCount: kindCount,
+                    totalLimit: limit,
+                    strictKindCap: true
+                });
+                overflow.forEach(function (entry) { selectedKeys[entry.key] = true; });
                 relevant = relevant.concat(overflow);
+            }
+            if (relevant.length + exploratory.length < limit - liked.length) {
+                var fallback = selectDiverse(reranked.filter(function (entry) { return !selectedKeys[entry.key]; }), limit - liked.length - exploratory.length - relevant.length, mode, {
+                    initialKindUse: contentKindCounts(liked.concat(exploratory, relevant)),
+                    kindCount: kindCount,
+                    totalLimit: limit
+                });
+                relevant = relevant.concat(fallback);
             }
             var selected = mergeEvery(relevant, exploratory, Math.max(4, Math.round(limit / Math.max(1, exploratory.length))));
             selected = mergeEvery(selected, liked, 4).slice(0, limit);
@@ -1935,7 +2042,7 @@
         }
 
         function previewNext() {
-            var ranked = rankMoodCards(cards, session.records, shown);
+            var ranked = rankDiagnosticMoodCards(cards, session.records, shown, readFilters());
             ranked.slice(0, 4).forEach(function (card) { loadVideo(card, function () {}); });
         }
 
@@ -1975,7 +2082,7 @@
             if (destroyed) return;
             changing = false;
             prepareFrameForNext();
-            var ranked = rankMoodCards(cards, session.records, shown);
+            var ranked = rankDiagnosticMoodCards(cards, session.records, shown, readFilters());
             if (!ranked.length) return self.finish(true);
             current = ranked[0];
             shown[cardKey(current)] = true;

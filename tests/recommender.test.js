@@ -244,6 +244,22 @@ test('trailer reveal waits for clean playback without hiding short clips too lon
   assert.equal(core.previewRevealDelay(2, 0), 700);
 });
 
+test('mood progress becomes complete at ten without presenting sixty as a goal', () => {
+  const partial = core.moodProgressView(7, 0.5);
+  assert.equal(partial.ready, false);
+  assert.equal(partial.text, '7 / 10 · настраиваем настроение');
+  assert.equal(partial.percent, 75);
+
+  const ready = core.moodProgressView(10, 0);
+  assert.equal(ready.ready, true);
+  assert.equal(ready.text, '10 оценок · улучшаем ленту');
+  assert.equal(ready.percent, 100);
+
+  assert.equal(core.moodProgressView(24, 0.5).text, '24 оценки · улучшаем ленту');
+  assert.equal(core.moodProgressView(21, 0).text, '21 оценка · улучшаем ленту');
+  assert.equal(core.moodProgressView(60, 1).percent, 100);
+});
+
 test('reserves only a quarter of each feed batch for exact likes', () => {
   assert.equal(core.likedQuota(40, 1), 10);
   assert.equal(core.likedQuota(20, 2), 5);

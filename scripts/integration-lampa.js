@@ -273,7 +273,19 @@ async function inspect() {
     })()`);
   }
 
-  await evaluate("window.LampaSmartRecs.calibrate(); true");
+  await evaluate(`(() => {
+    window.__smartRecsNotices = [];
+    if (window.Lampa?.Noty?.show && !window.Lampa.Noty.__smartRecsCapture) {
+      const original = window.Lampa.Noty.show;
+      window.Lampa.Noty.show = function (message, options) {
+        window.__smartRecsNotices.push(String(message));
+        return original.call(this, message, options);
+      };
+      window.Lampa.Noty.__smartRecsCapture = true;
+    }
+    window.LampaSmartRecs.calibrate();
+    return true;
+  })()`);
   let moodScreen;
   for (let attempt = 0; attempt < 200; attempt += 1) {
     moodScreen = await evaluate(`({
@@ -432,6 +444,11 @@ async function inspect() {
     if (records < target) throw new Error(`Rating ${target} was not recorded; got ${records}`);
   }
   phase('ten ratings recorded');
+  const moodReadyState = await evaluate(`({
+    counter: document.querySelector('.smart-recs-mood__counter')?.textContent.trim() || '',
+    trackWidth: document.querySelector('.smart-recs-mood__track span')?.style.width || '',
+    notices: window.__smartRecsNotices || []
+  })`);
   await evaluate("window.Lampa.Controller.back(); true");
   let moodActivation;
   for (let attempt = 0; attempt < 160; attempt += 1) {
@@ -487,7 +504,7 @@ async function inspect() {
 
   const bridgeMessages = await evaluate("window.__smartRecsBridgeMessages || []");
   socket.close();
-  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, loadingTransition, remoteNavigation, likeButtonSelection, likedNavigation, afterBack, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
+  return { state, recommendationScreen, filterPrompt, filterSelection, filterResult, tasteMenu, dislikeBefore, dislikeRemoval, moodScreen, leftSelection, rightSelection, loadingTransition, remoteNavigation, likeButtonSelection, likedNavigation, afterBack, moodReadyState, moodActivation, watchBefore, watchAction, bridgeMessages, exceptions, consoleMessages };
 }
 
 (async () => {
@@ -507,7 +524,7 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.5.4' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+    if (report.state?.plugin !== '0.5.5' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
       report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.controller !== 'modal' || !report.filterPrompt?.focused || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
@@ -533,6 +550,8 @@ async function inspect() {
       (report.likedNavigation?.iframe === 1 && !report.likedNavigation?.ready) ||
       (report.likedNavigation?.iframe === 1 && !report.likedNavigation?.iframeSrc?.includes('autoplay=1')) ||
       report.afterBack?.overlay !== 0 || report.afterBack?.draftRecords !== 2 ||
+      report.moodReadyState?.counter !== '10 оценок · улучшаем ленту' || report.moodReadyState?.trackWidth !== '100%' ||
+      !report.moodReadyState?.notices?.includes('Настроение готово — можно выйти или продолжить') ||
       report.moodActivation?.activeRecords !== 10 || report.moodActivation?.hasDraft ||
       report.moodActivation?.recommendationEntry !== 1 || report.moodActivation?.profileSignals < 10 ||
       !report.watchBefore?.focused || report.watchAction?.overlay !== 0 || report.watchAction?.component !== 'full' ||

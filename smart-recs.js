@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.5.4
+ * Lampa Smart Recs v0.5.5
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.5.4';
+    var VERSION = '0.5.5';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -318,6 +318,23 @@
 
     function previewRevealDelay(duration, startAt) {
         return clamp(previewClipDuration(duration, startAt) * 180, 700, PLAYER_REVEAL_MAX_DELAY);
+    }
+
+    function ratingCountText(amount) {
+        var lastTwo = amount % 100;
+        var last = amount % 10;
+        var word = lastTwo >= 11 && lastTwo <= 14 ? 'оценок' : last === 1 ? 'оценка' : last >= 2 && last <= 4 ? 'оценки' : 'оценок';
+        return amount + ' ' + word;
+    }
+
+    function moodProgressView(amount, actionProgress) {
+        amount = Math.max(0, Math.round(asNumber(amount, 0)));
+        var ready = amount >= MOOD_MINIMUM;
+        return {
+            ready: ready,
+            text: ready ? ratingCountText(amount) + ' · улучшаем ленту' : amount + ' / ' + MOOD_MINIMUM + ' · настраиваем настроение',
+            percent: ready ? 100 : clamp((amount + clamp(asNumber(actionProgress, 0), 0, 1)) / MOOD_MINIMUM * 100, 0, 100)
+        };
     }
 
     function trailerTasteWeight(action, watchedSeconds, hasVideo) {
@@ -635,6 +652,7 @@
         moodSignalWeight: moodSignalWeight,
         previewClipDuration: previewClipDuration,
         previewRevealDelay: previewRevealDelay,
+        moodProgressView: moodProgressView,
         trailerTasteWeight: trailerTasteWeight,
         tasteDecay: tasteDecay,
         genomeFeatures: genomeFeatures,
@@ -1648,7 +1666,7 @@
             return 'Продолжить: ' + mood.draft.records.length + ' из ' + MOOD_MINIMUM;
         }
         if (mood.active) return 'Обновить выбор · действует 48 часов';
-        return '10–60 коротких трейлеров';
+        return '10 коротких трейлеров · дальше по желанию';
     }
 
     function FilterEntryCard(data) {
@@ -1766,11 +1784,10 @@
 
         function updateProgress() {
             var amount = count();
-            var target = amount < MOOD_MINIMUM ? MOOD_MINIMUM : MOOD_MAXIMUM;
-            html.find('.smart-recs-mood__counter').text(amount < MOOD_MINIMUM ? amount + ' / ' + MOOD_MINIMUM + ' · минимум' : amount + ' / ' + MOOD_MAXIMUM + ' · настроение готово');
             var actionProgress = currentVideo ? clamp(watchedSeconds / clipDuration, 0, 1) : 0;
-            var total = clamp((amount + actionProgress) / target * 100, 0, 100);
-            html.find('.smart-recs-mood__track span').css('width', total + '%');
+            var view = moodProgressView(amount, actionProgress);
+            html.find('.smart-recs-mood__counter').text(view.text);
+            html.find('.smart-recs-mood__track span').css('width', view.percent + '%');
         }
 
         function saveSession(complete) {
@@ -2012,7 +2029,10 @@
                 tasteWeight: trailerTasteWeight(action, watched, Boolean(currentVideo))
             });
             saveSession(false);
-            if (count() === MOOD_MINIMUM) clearCache();
+            if (count() === MOOD_MINIMUM) {
+                clearCache();
+                notify('Настроение готово — можно выйти или продолжить');
+            }
             updateProgress();
         }
 

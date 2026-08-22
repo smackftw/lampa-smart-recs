@@ -216,7 +216,7 @@ test('boots against the current public Lampa plugin surface', async () => {
   vm.runInNewContext(source, context, { filename: 'smart-recs.js' });
   timers.splice(0).forEach((fn) => fn());
 
-  assert.equal(context.window.LampaSmartRecs.version, '0.6.1');
+  assert.equal(context.window.LampaSmartRecs.version, '0.6.2');
   assert.equal(storage.get('lampa_smart_recs_feedback').schema, 2);
   assert.equal(storage.get('lampa_smart_recs_feedback').items['movie:12'].value, 1);
   assert.equal(storage.get('lampa_smart_recs_feedback').items['movie:12'].tasteWeight, 8);

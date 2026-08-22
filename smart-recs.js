@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.6.1
+ * Lampa Smart Recs v0.6.2
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.6.1';
+    var VERSION = '0.6.2';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -21,7 +21,9 @@
     var MOOD_MAXIMUM = 60;
     var MOOD_TTL = 48 * 60 * 60 * 1000;
     var MOOD_DRAFT_TTL = 24 * 60 * 60 * 1000;
-    var PREVIEW_SECONDS = 30;
+    var PREVIEW_DECISION_SECONDS = 30;
+    var PREVIEW_MAX_SECONDS = 60;
+    var PREVIEW_END_GRACE_SECONDS = 10;
     var PLAYER_RECYCLE_AFTER = 4;
     var PLAYER_WARMUP_SECONDS = 4;
     var PLAYER_REVEAL_MAX_DELAY = 3500;
@@ -326,8 +328,10 @@
     function previewClipDuration(duration, startAt) {
         var total = Math.max(0, asNumber(duration, 0));
         var offset = Math.max(0, asNumber(startAt, 0));
-        if (total <= offset) return PREVIEW_SECONDS;
-        return clamp(total - offset, 1, PREVIEW_SECONDS);
+        if (total <= offset) return PREVIEW_DECISION_SECONDS;
+        var remaining = total - offset;
+        if (remaining <= PREVIEW_MAX_SECONDS + PREVIEW_END_GRACE_SECONDS) return Math.max(1, remaining);
+        return PREVIEW_MAX_SECONDS;
     }
 
     function previewRevealDelay(duration, startAt) {
@@ -1931,7 +1935,7 @@
         var targetClipStart = 0;
         var loadStart = 0;
         var clipStart = 0;
-        var clipDuration = PREVIEW_SECONDS;
+        var clipDuration = PREVIEW_DECISION_SECONDS;
         var watchedSeconds = 0;
         var shownAt = 0;
         var playbackTimer = null;
@@ -2021,7 +2025,7 @@
         function destroyFrame() {
             removePlayerFrame();
             currentVideo = null;
-            clipDuration = PREVIEW_SECONDS;
+            clipDuration = PREVIEW_DECISION_SECONDS;
         }
 
         function prepareFrameForNext() {
@@ -2069,7 +2073,7 @@
             targetClipStart = video.type === 'Teaser' ? 0 : 8;
             loadStart = Math.max(0, targetClipStart - PLAYER_WARMUP_SECONDS);
             clipStart = targetClipStart;
-            clipDuration = PREVIEW_SECONDS;
+            clipDuration = PREVIEW_DECISION_SECONDS;
             if (frame && (forceNew || playerUseCount >= PLAYER_RECYCLE_AFTER)) removePlayerFrame();
             playerSequence += 1;
             ignorePlayback = false;

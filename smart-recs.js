@@ -1,5 +1,5 @@
 /**
- * Lampa Smart Recs v0.6.2
+ * Lampa Smart Recs v0.6.3
  * Privacy-first personal recommendations without user API keys or a backend.
  * Install: https://smackftw.github.io/lampa-smart-recs/smart-recs.js
  */
@@ -9,7 +9,7 @@
     var pluginScript = typeof document !== 'undefined' ? document.currentScript : null;
     var pluginBaseUrl = pluginScript && pluginScript.src ? pluginScript.src.replace(/[^/]*(?:\?.*)?$/, '') : 'https://smackftw.github.io/lampa-smart-recs/';
     var TRAILER_PLAYER_URL = pluginBaseUrl + 'trailer-player.html';
-    var VERSION = '0.6.2';
+    var VERSION = '0.6.3';
     var CACHE_SCHEMA = 2;
     var FEEDBACK_SCHEMA = 2;
     var MOOD_SCHEMA = 1;
@@ -1810,17 +1810,17 @@
         style.id = STYLE_ID;
         style.setAttribute('data-smart-recs-version', VERSION);
         style.textContent = [
-            '.smart-recs-mood-entry{width:20em;height:8.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#e8eee9,#b9c8bd);color:#152019;display:flex;align-items:flex-end;position:relative;padding:1.25em;box-sizing:border-box}',
-            '.smart-recs-mood-entry:after{content:"";position:absolute;inset:0;background:radial-gradient(circle at 82% 16%,rgba(255,255,255,.75),transparent 34%)}',
-            '.smart-recs-mood-entry__icon{position:absolute;right:1.1em;top:1em;width:4.2em;height:4.2em;opacity:.82}',
-            '.smart-recs-mood-entry__text{position:relative;z-index:1}.smart-recs-mood-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-mood-entry__subtitle{font-size:.86em;opacity:.72;max-width:18em}',
-            '.smart-recs-mood-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
-            '.smart-recs-filter-entry{width:20em;height:8.5em;border-radius:1.1em;overflow:hidden;background:linear-gradient(135deg,#dfe5ee,#aebdce);color:#17202a;display:flex;align-items:flex-end;position:relative;padding:1.25em;box-sizing:border-box}',
-            '.smart-recs-filter-entry:after{content:"";position:absolute;right:1.4em;top:1.2em;width:4.3em;height:4.3em;border:.22em solid currentColor;border-radius:50%;opacity:.16}',
-            '.smart-recs-filter-entry__text{position:relative;z-index:1}.smart-recs-filter-entry__title{font-size:1.35em;font-weight:650;margin-bottom:.35em}.smart-recs-filter-entry__subtitle{font-size:.82em;line-height:1.35;opacity:.72;max-width:21em}',
-            '.smart-recs-filter-entry.focus{box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.28);transform:scale(1.025)}',
-            '.smart-recs-screen{height:100%}.smart-recs-page{padding:1.1em 0 3em}.smart-recs-page__heading{font-size:1.45em;font-weight:600;margin:0 1em .8em}',
-            '.smart-recs-actions-row{display:flex;flex-wrap:wrap;gap:1em;padding:0 1.4em 2.2em}.smart-recs-grid{align-items:flex-start}.smart-recs-grid .card{padding-bottom:1.8em}',
+            '.smart-recs-screen{height:100%}.smart-recs-page{--smart-recs-gutter:1.4em;--smart-recs-gutter:clamp(1.2em,2.25vw,2.6em);padding:1.1em 0 3em}.smart-recs-page__heading{font-size:1.45em;font-weight:600;margin:0 var(--smart-recs-gutter) .8em}',
+            '.smart-recs-actions-row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1em;padding:0 var(--smart-recs-gutter) 2.2em}',
+            '.smart-recs-action-entry{width:100%;height:6.3em;min-width:0;border-radius:1.05em;overflow:hidden;color:#edf2ef;display:flex;align-items:center;position:relative;padding:1.2em;box-sizing:border-box;border:.08em solid rgba(255,255,255,.08);transition:transform .16s ease,box-shadow .16s ease,background-color .16s ease}',
+            '.smart-recs-filter-entry{background:linear-gradient(125deg,#2b3033,#25292b)}.smart-recs-mood-entry{background:linear-gradient(125deg,#29312d,#242a27)}',
+            '.smart-recs-action-entry__icon{width:3.2em;height:3.2em;flex:0 0 3.2em;margin-right:1em;border-radius:.82em;background:rgba(255,255,255,.09);color:#dce5df;display:grid;place-items:center}.smart-recs-action-entry__icon svg{width:1.65em;height:1.65em;display:block}',
+            '.smart-recs-action-entry__text{position:relative;z-index:1;min-width:0}.smart-recs-action-entry__title{font-size:1.3em;font-weight:650;margin-bottom:.32em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.smart-recs-action-entry__subtitle{font-size:.82em;line-height:1.3;opacity:.62;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+            '.smart-recs-action-entry__chevron{width:1.35em;height:1.35em;flex:0 0 1.35em;margin-left:auto;padding-left:.75em;box-sizing:content-box;color:rgba(255,255,255,.38)}',
+            '.smart-recs-action-entry.focus{z-index:2;box-shadow:0 0 0 .22em #fff,0 .8em 2.4em rgba(0,0,0,.3);transform:scale(1.025)}.smart-recs-filter-entry.focus{background:#343a3d}.smart-recs-mood-entry.focus{background:#344038}',
+            '.smart-recs-grid{align-items:flex-start}.smart-recs-grid .card{padding-bottom:1.8em}',
+            '@supports(display:grid){.smart-recs-grid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(12em,1fr));gap:1em;padding-left:var(--smart-recs-gutter)!important;padding-right:var(--smart-recs-gutter)!important}.smart-recs-grid .card{width:100%!important;min-width:0;margin:0!important;padding-left:0!important;padding-right:0!important}}',
+            '@supports(width:clamp(1px,2px,3px)){.smart-recs-grid{grid-template-columns:repeat(auto-fill,minmax(clamp(11.4em,14vw,12.75em),1fr))}}',
             '.smart-recs-grid .card__title{display:-webkit-box!important;-webkit-box-orient:vertical;-webkit-line-clamp:3!important;line-clamp:3!important;height:auto!important;min-height:2.4em;max-height:3.6em;overflow:hidden;overflow-wrap:anywhere;word-break:break-word}',
             '.smart-recs-filter-editor{padding:.3em .1em 1em}.smart-recs-filter-editor__section{margin-bottom:1.4em}.smart-recs-filter-editor__heading{font-size:1em;font-weight:650;margin-bottom:.65em}.smart-recs-filter-editor__chips{display:flex;flex-wrap:wrap;gap:.55em}',
             '.smart-recs-filter-chip{padding:.62em .9em;border-radius:.65em;background:rgba(255,255,255,.09);border:.12em solid rgba(255,255,255,.12);min-width:6.5em;text-align:center;box-sizing:border-box}.smart-recs-filter-chip.is-selected,.smart-recs-filter-chip.is-wanted{background:#dce8df;color:#172019;border-color:#dce8df}.smart-recs-filter-chip.is-excluded{background:#653e43;color:#fff0f0;border-color:#8b545b}.smart-recs-filter-chip.focus{box-shadow:0 0 0 .18em #fff;transform:scale(1.035)}',
@@ -1836,7 +1836,7 @@
             '.smart-recs-mood__info{max-width:75%;text-shadow:0 .12em .35em rgba(0,0,0,.8)}.smart-recs-mood__title{font-size:2.1em;line-height:1.08;font-weight:650;opacity:1;transform:translateY(0);transition:opacity .25s ease,transform .25s ease}.smart-recs-mood__title.loading{opacity:.72;transform:translateY(.08em)}',
             '.smart-recs-mood__actions{display:flex;gap:.8em;flex-shrink:0;margin-top:1.15em}.smart-recs-mood__button{min-width:7.6em;padding:.82em 1em;border-radius:.72em;background:rgba(238,243,239,.15);border:.12em solid rgba(255,255,255,.26);font-size:1.05em;text-align:center;box-sizing:border-box}.smart-recs-mood__button.focus{background:#eef3ef;color:#101612;border-color:#eef3ef;transform:scale(1.045)}',
             '.smart-recs-mood__button--like.focus{background:#d5e7d9;border-color:#d5e7d9}.smart-recs-mood__button--next.focus{background:#b9c9bd;border-color:#b9c9bd}.smart-recs-mood__status{position:absolute;left:50%;top:50%;z-index:2;transform:translate(-50%,-50%);padding:.75em 1em;border-radius:.6em;background:rgba(0,0,0,.7);font-size:.9em;opacity:1;visibility:visible;transition:opacity .3s ease,visibility 0s}.smart-recs-mood__status.hide{opacity:0;visibility:hidden;transition:opacity .3s ease,visibility 0s .3s}',
-            '@media(max-width:700px){.smart-recs-actions-row{display:grid;grid-template-columns:1fr 1fr}.smart-recs-filter-entry,.smart-recs-mood-entry{width:100%}.smart-recs-mood__top{left:0;right:0;top:0;padding:.9em 1.4em .8em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
+            '@media(max-width:700px){.smart-recs-actions-row{gap:.7em}.smart-recs-action-entry{height:5.7em;padding:.9em}.smart-recs-action-entry__icon{width:2.8em;height:2.8em;flex-basis:2.8em;margin-right:.7em}.smart-recs-action-entry__title{font-size:1em}.smart-recs-action-entry__subtitle{font-size:.72em}.smart-recs-action-entry__chevron{display:none}.smart-recs-mood__top{left:0;right:0;top:0;padding:.9em 1.4em .8em}.smart-recs-mood__bottom{left:1.4em;right:1.4em;bottom:1.5em;display:block}.smart-recs-mood__info{max-width:100%}.smart-recs-mood__actions{margin-top:1.2em}.smart-recs-mood__button{flex:1}.smart-recs-mood__title{font-size:1.55em}}'
         ].join('');
         document.head.appendChild(style);
     }
@@ -1854,7 +1854,10 @@
         var html;
         var card = {};
         card.create = function () {
-            html = $('<div class="smart-recs-filter-entry selector"><div class="smart-recs-filter-entry__text"><div class="smart-recs-filter-entry__title">Изменить подборку</div><div class="smart-recs-filter-entry__subtitle"></div></div></div>');
+            html = $('<div class="smart-recs-action-entry smart-recs-filter-entry selector">' +
+                '<span class="smart-recs-action-entry__icon"><svg viewBox="0 0 32 32"><path d="M5 8h12M23 8h4M19 5v6M5 16h4M15 16h12M11 13v6M5 24h12M23 24h4M19 21v6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></span>' +
+                '<div class="smart-recs-action-entry__text smart-recs-filter-entry__text"><div class="smart-recs-action-entry__title smart-recs-filter-entry__title">Изменить подборку</div><div class="smart-recs-action-entry__subtitle smart-recs-filter-entry__subtitle"></div></div>' +
+                '<svg class="smart-recs-action-entry__chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>');
             html.find('.smart-recs-filter-entry__subtitle').text(filterSummary(readFilters()));
             html.on('hover:focus hover:hover hover:touch', function () {
                 if (card.onFocus) card.onFocus(html[0], data);
@@ -1872,9 +1875,10 @@
         var html;
         var card = {};
         card.create = function () {
-            html = $('<div class="smart-recs-mood-entry selector">' +
-                '<svg class="smart-recs-mood-entry__icon" viewBox="0 0 64 64"><path fill="currentColor" d="M32 6a26 26 0 1 0 0 52 26 26 0 0 0 0-52Zm-9 15 22 11-22 11V21Z"/></svg>' +
-                '<div class="smart-recs-mood-entry__text"><div class="smart-recs-mood-entry__title">Лента трейлеров</div><div class="smart-recs-mood-entry__subtitle"></div></div></div>');
+            html = $('<div class="smart-recs-action-entry smart-recs-mood-entry selector">' +
+                '<span class="smart-recs-action-entry__icon smart-recs-mood-entry__icon"><svg viewBox="0 0 32 32"><path fill="currentColor" d="M10 6.5 26 16 10 25.5Z"/></svg></span>' +
+                '<div class="smart-recs-action-entry__text smart-recs-mood-entry__text"><div class="smart-recs-action-entry__title smart-recs-mood-entry__title">Лента трейлеров</div><div class="smart-recs-action-entry__subtitle smart-recs-mood-entry__subtitle"></div></div>' +
+                '<svg class="smart-recs-action-entry__chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div>');
             html.find('.smart-recs-mood-entry__subtitle').text(moodStatusText());
             html.on('hover:focus hover:hover hover:touch', function () {
                 if (card.onFocus) card.onFocus(html[0], data);

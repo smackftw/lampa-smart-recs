@@ -9,6 +9,7 @@ const path = require('node:path');
 const chrome = process.env.CHROME_PATH;
 const targetUrl = process.env.LAMPA_URL || 'http://127.0.0.1:3000';
 const port = Number(process.env.CHROME_DEBUG_PORT || 9227);
+const windowSize = process.env.CHROME_WINDOW_SIZE;
 const pluginSource = fs.readFileSync(path.join(__dirname, '..', 'smart-recs.js'), 'utf8')
   .replace("'https://smackftw.github.io/lampa-smart-recs/'", JSON.stringify(`${targetUrl.replace(/\/$/, '')}/`));
 
@@ -21,11 +22,12 @@ const profile = path.join(os.tmpdir(), `lampa-smart-recs-integration-${process.p
 fs.mkdirSync(profile, { recursive: true });
 
 const browser = spawn(chrome, [
-    '--headless=new',
-    '--disable-gpu',
-    '--autoplay-policy=no-user-gesture-required',
+  '--headless=new',
+  '--disable-gpu',
+  '--autoplay-policy=no-user-gesture-required',
   '--no-first-run',
   '--disable-extensions',
+  ...(windowSize ? [`--window-size=${windowSize}`] : []),
   `--remote-debugging-port=${port}`,
   `--user-data-dir=${profile}`,
   targetUrl,
@@ -159,12 +161,35 @@ async function inspect() {
         const mood = document.querySelector('.smart-recs-mood-entry');
         return Boolean(filter && mood && filter.closest('.smart-recs-actions-row') === mood.closest('.smart-recs-actions-row'));
       })(),
+      equalActionWidths: (() => {
+        const filter = document.querySelector('.smart-recs-filter-entry')?.getBoundingClientRect();
+        const mood = document.querySelector('.smart-recs-mood-entry')?.getBoundingClientRect();
+        return Boolean(filter && mood && Math.abs(filter.width - mood.width) < 2);
+      })(),
+      semanticIcons: document.querySelectorAll('.smart-recs-action-entry__icon svg').length,
+      gridDisplay: getComputedStyle(document.querySelector('.smart-recs-grid')).display,
+      gridColumns: getComputedStyle(document.querySelector('.smart-recs-grid')).gridTemplateColumns.split(' ').filter(Boolean).length,
+      balancedGridInsets: (() => {
+        const grid = document.querySelector('.smart-recs-grid');
+        const cards = Array.from(grid?.querySelectorAll('.card') || []);
+        if (!grid || !cards.length) return false;
+        const gridRect = grid.getBoundingClientRect();
+        const firstTop = Math.round(cards[0].getBoundingClientRect().top);
+        const firstRow = cards.filter((card) => Math.round(card.getBoundingClientRect().top) === firstTop);
+        const left = firstRow[0].getBoundingClientRect().left - gridRect.left;
+        const right = gridRect.right - firstRow[firstRow.length - 1].getBoundingClientRect().right;
+        return Math.abs(left - right) < 2;
+      })(),
       gridCards: document.querySelectorAll('.smart-recs-grid .card').length,
       missingTitles: Array.from(document.querySelectorAll('.smart-recs-grid .card')).filter((item) => !item.querySelector('.card__title')?.textContent.trim()).length,
       gridRows: new Set(Array.from(document.querySelectorAll('.smart-recs-grid .card')).map((item) => Math.round(item.getBoundingClientRect().top))).size
     })`);
-    if (recommendationScreen.entry && recommendationScreen.filterEntry && recommendationScreen.sameRow && recommendationScreen.gridRows > 1 && !recommendationScreen.missingTitles) break;
+    if (recommendationScreen.entry && recommendationScreen.filterEntry && recommendationScreen.sameRow && recommendationScreen.equalActionWidths && recommendationScreen.semanticIcons === 2 && recommendationScreen.gridDisplay === 'grid' && recommendationScreen.balancedGridInsets && recommendationScreen.gridRows > 1 && !recommendationScreen.missingTitles) break;
     await delay(250);
+  }
+  if (process.env.INTEGRATION_SCREENSHOT) {
+    const capture = await command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    fs.writeFileSync(process.env.INTEGRATION_SCREENSHOT, Buffer.from(capture.data, 'base64'));
   }
 
   let filterPrompt;
@@ -525,8 +550,8 @@ async function inspect() {
         report.exceptions.length) process.exitCode = 1;
       return;
     }
-    if (report.state?.plugin !== '0.6.2' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
-      report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
+    if (report.state?.plugin !== '0.6.3' || report.state?.menu < 1 || report.state?.cacheLines < 1 ||
+      report.recommendationScreen?.entry !== 1 || report.recommendationScreen?.filterEntry !== 1 || !report.recommendationScreen?.sameRow || !report.recommendationScreen?.equalActionWidths || report.recommendationScreen?.semanticIcons !== 2 || report.recommendationScreen?.gridDisplay !== 'grid' || report.recommendationScreen?.gridColumns < 2 || !report.recommendationScreen?.balancedGridInsets || report.recommendationScreen?.gridRows < 2 || report.recommendationScreen?.missingTitles !== 0 ||
       report.filterPrompt?.title !== 'Что показать сейчас' || report.filterPrompt?.controller !== 'modal' || !report.filterPrompt?.focused || report.filterPrompt?.types !== 4 || report.filterPrompt?.genres !== 8 || report.filterPrompt?.ratings !== 5 ||
       report.filterSelection?.selectedTypes?.join('|') !== 'movie' || report.filterSelection?.wanted?.join('|') !== 'science_fiction' ||
       report.filterSelection?.excluded?.join('|') !== 'horror' || report.filterSelection?.rating !== '7' ||
